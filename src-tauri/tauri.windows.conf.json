@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "title": "Saga",
+        "width": 1380,
+        "height": 880,
+        "minWidth": 1000,
+        "minHeight": 620,
+        "decorations": false,
+        "shadow": true,
+        "backgroundColor": "#0F1012"
+      }
+    ]
+  }
+}

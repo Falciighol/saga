@@ -4,7 +4,7 @@ import { forwardRef, memo, useEffect, useRef } from "react";
 import { dragOut, dragSample, sampleMenu } from "../lib/actions";
 import { bpmText, fmtCount, fmtLength, keyText } from "../lib/format";
 import { keyFilterLabel } from "../lib/keys";
-import { isMac, modKey } from "../lib/platform";
+import { isMac, isWindows, modKey } from "../lib/platform";
 import { useRender } from "../lib/renders";
 import type { SampleRow } from "../lib/types";
 import { useBrowse } from "../store/browse";
@@ -19,6 +19,7 @@ import { Clock, PitchStepper, ReverseIcon, useElementWidth } from "./PreviewPane
 import { KeyControl, SyncSwitch, TempoControl } from "./ProjectControls";
 import { cx, IconButton, Kbd } from "./ui";
 import { MiniWave } from "./Waveforms";
+import { WindowControls } from "./WindowControls";
 
 const ROW_H = 56;
 
@@ -307,7 +308,7 @@ export const MiniPlayer = forwardRef<HTMLInputElement>(function MiniPlayer(_, se
   const { setMini, setOnTop } = useUi.getState();
   return (
     <div className="flex h-full flex-col bg-bg text-text">
-      <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-panel pr-2.5" style={{ paddingLeft: isMac ? 84 : 12 }}>
+      <header data-tauri-drag-region className={cx("flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-panel", isWindows ? "pr-0" : "pr-2.5")} style={{ paddingLeft: isMac ? 84 : 12 }}>
         <div data-tauri-drag-region className="h-full flex-1" />
         <button
           type="button"
@@ -322,6 +323,8 @@ export const MiniPlayer = forwardRef<HTMLInputElement>(function MiniPlayer(_, se
         <IconButton label="Back to the full window" size={28} onClick={() => setMini(false)}>
           <Maximize2 size={15} strokeWidth={1.75} />
         </IconButton>
+        {isWindows && <div className="w-1.5 shrink-0" />}
+        <WindowControls />
       </header>
       {hasSources ? (
         <>

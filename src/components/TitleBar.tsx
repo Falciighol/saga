@@ -1,12 +1,13 @@
 import { PictureInPicture2, Search, Settings2, X } from "lucide-react";
 import { forwardRef } from "react";
 import { fmtCount } from "../lib/format";
-import { isMac, modKey } from "../lib/platform";
+import { isMac, isWindows, modKey } from "../lib/platform";
 import { useBrowse } from "../store/browse";
 import { useLibrary } from "../store/library";
 import { useUi } from "../store/ui";
 import { ProjectControls } from "./ProjectControls";
-import { Divider, IconButton, Kbd } from "./ui";
+import { cx, Divider, IconButton, Kbd } from "./ui";
+import { WindowControls } from "./WindowControls";
 
 export function Logo({ size = 18 }: { size?: number }) {
   return (
@@ -29,7 +30,7 @@ export const TitleBar = forwardRef<HTMLInputElement, { onOpenSettings: () => voi
   const total = useLibrary((s) => s.stats?.total ?? 0);
 
   return (
-    <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-3.5 border-b border-line bg-panel pr-4">
+    <header data-tauri-drag-region className={cx("flex h-12 shrink-0 items-center gap-3.5 border-b border-line bg-panel", isWindows ? "pr-0" : "pr-4")}>
       <div data-tauri-drag-region className="flex w-58 shrink-0 items-center gap-2.5" style={{ paddingLeft: isMac ? 90 : 16 }}>
         <Logo size={22} />
         <span data-tauri-drag-region className="text-[16px] font-semibold tracking-[-0.01em]">
@@ -66,6 +67,7 @@ export const TitleBar = forwardRef<HTMLInputElement, { onOpenSettings: () => voi
       <IconButton label="Settings" onClick={onOpenSettings}>
         <Settings2 size={16} strokeWidth={1.75} />
       </IconButton>
+      <WindowControls />
     </header>
   );
 });

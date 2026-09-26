@@ -1,5 +1,8 @@
 export const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
 
+/** Windows draws no title bar for us, so the app shows its own caption buttons. */
+export const isWindows = typeof navigator !== "undefined" && /Windows/.test(navigator.userAgent);
+
 export const modKey = isMac ? "⌘" : "Ctrl";
 
 /** True when the keyboard event used the platform's primary modifier. */
