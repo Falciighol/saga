@@ -1,0 +1,12 @@
+# Store and check out text files with LF on every OS, overriding core.autocrlf
+# (Git for Windows defaults it to true, which rewrites files as CRLF).
+* text=auto eol=lf
+
+# Windows scripts must keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.ico binary
+*.icns binary
