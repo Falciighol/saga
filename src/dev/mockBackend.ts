@@ -1,0 +1,563 @@
+// Dev-only stand-in for the Rust backend, so the UI can be worked on in a plain browser
+// (`npm run dev`, then open http://localhost:1420). Never bundled into the app.
+
+import { emit } from "@tauri-apps/api/event";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { compatibleKeys } from "../lib/keys";
+import { groupOf } from "../lib/soundmap";
+import type { Collection, Facets, Filters, QueryRequest, SampleRow, SourceInfo } from "../lib/types";
+import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
+
+function rng(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const KEYS: Record<string, [number, number]> = {
+  Am: [9, 1], Em: [4, 1], Dm: [2, 1], Gm: [7, 1], "F#m": [6, 1], Bbm: [10, 1], Cm: [0, 1], C: [0, 0], F: [5, 0], G: [7, 0], Eb: [3, 0],
+};
+const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+
+function envelope(kind: string, r: () => number, beats: number): Uint8Array {
+  const out = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) {
+    const t = (i + 0.5) / 512;
+    const p16 = t * beats * 4;
+    const ph = p16 - Math.floor(p16);
+    const inBeat = Math.floor(p16) % 4;
+    let v: number;
+    switch (kind) {
+      case "hit":
+        v = t < 0.02 ? 1 : Math.exp(-t * 7) * (0.85 + 0.15 * r());
+        break;
+      case "long":
+        v = Math.exp(-t * 2.2) * (0.8 + 0.2 * r());
+        break;
+      case "drums":
+        v = (inBeat === 0 ? 1 : inBeat === 2 ? 0.5 : 0.28) * Math.exp(-ph * 3) * (0.8 + 0.2 * r());
+        break;
+      case "pad":
+        v = (0.4 + 0.2 * Math.sin(t * 12)) * Math.min(1, t * 5) * Math.min(1, (1 - t) * 4) * (0.85 + 0.15 * r());
+        break;
+      default: {
+        const p2 = (t * beats) / 2;
+        v = (0.55 + 0.25 * r()) * Math.exp(-(p2 - Math.floor(p2)) * 1.4) + 0.06;
+      }
+    }
+    out[i] = Math.round(Math.min(1, v) * 255);
+  }
+  return out;
+}
+
+function b64(a: Uint8Array) {
+  let s = "";
+  for (const x of a) s += String.fromCharCode(x);
+  return btoa(s);
+}
+
+const SOURCES: SourceInfo[] = [
+  { id: 1, path: "/Volumes/Samples/Sample Packs", name: "Sample Packs", online: true, count: 0 },
+  { id: 2, path: "/Users/me/Splice/sounds", name: "Splice", online: true, count: 0 },
+  { id: 3, path: "/Users/me/Music/Recordings", name: "Recordings", online: true, count: 0 },
+];
+
+const PACKS = [
+  { source: 1, pack: "Dusty Tape Drums Vol.2", prefix: "DT2", cats: ["Kick", "Snare", "Hat", "Perc", "Drums"], tags: ["tape", "dusty"] },
+  { source: 1, pack: "Nightdrive Synthwave", prefix: "Nightdrive", cats: ["Bass", "Synth", "Pad", "Drums"], tags: ["analog", "synthwave"] },
+  { source: 1, pack: "Vocal Chops Amber", prefix: "Amber_Vox", cats: ["Vocal"], tags: ["female", "chopped"] },
+  { source: 1, pack: "Warehouse Techno Tools", prefix: "WTT", cats: ["Kick", "Clap", "Hat", "Perc", "FX", "Drums"], tags: ["techno", "909"] },
+  { source: 2, pack: "Lo-Fi Keys & Textures", prefix: "LoFi", cats: ["Keys", "Pad", "Bass"], tags: ["lofi", "warm"] },
+  { source: 3, pack: "Recordings", prefix: "Take", cats: ["Guitar", "Vocal", "Perc"], tags: [] },
+];
+const WORDS: Record<string, string[]> = {
+  Kick: ["Kick_Punchy", "Kick_Round", "Kick_Dusty", "Kick_Sub"],
+  Snare: ["Snare_Crack", "Snare_Room", "Rim_Tight"],
+  Clap: ["Clap_Wide", "Clap_Stack"],
+  Hat: ["Hat_Closed", "Hat_Open", "Ride_Soft"],
+  Perc: ["Perc_Shaker", "Perc_Conga", "Perc_Rumble"],
+  Drums: ["Drum_Loop", "Top_Loop", "Break_Loop"],
+  Bass: ["Bass_Loop", "Bass_Pluck", "Reese_Loop"],
+  Synth: ["Arp_Loop", "Chord_Stabs", "Lead_Loop"],
+  Keys: ["Rhodes_Loop", "Piano_Chords"],
+  Pad: ["Pad_Texture", "Drone_Air"],
+  Vocal: ["Vox_Chop_Loop", "Vox_Phrase", "Vox_Shot_Hey"],
+  Guitar: ["Guitar_Riff", "Guitar_Strum"],
+  FX: ["FX_Riser", "FX_Impact", "FX_Sweep"],
+};
+
+function build(): SampleRow[] {
+  const r = rng(42);
+  const rows: SampleRow[] = [];
+  let id = 1;
+  for (const p of PACKS) {
+    for (const cat of p.cats) {
+      const n = 6 + Math.floor(r() * 10);
+      for (let i = 0; i < n; i++) {
+        const base = WORDS[cat][Math.floor(r() * WORDS[cat].length)];
+        const loop = /Loop|Stabs|Riff|Strum|Phrase|Drone|Texture|Chords/.test(base) || cat === "Drums";
+        const bpm = loop ? [90, 118, 120, 122, 124, 126, 128, 140, 174][Math.floor(r() * 9)] : null;
+        const keyNames = Object.keys(KEYS);
+        const pitched = !["Kick", "Snare", "Clap", "Hat", "Perc", "Drums", "FX"].includes(cat) || (cat === "Kick" && r() > 0.5);
+        const keyName = pitched ? (loop ? keyNames[Math.floor(r() * keyNames.length)] : NOTES[Math.floor(r() * 12)]) : null;
+        const bars = loop ? [2, 4, 4, 8, 8, 16][Math.floor(r() * 6)] : 0;
+        const duration = loop && bpm ? (bars * 240) / bpm : 0.12 + r() * (cat === "FX" ? 4 : 1.6);
+        // Own recordings have no tempo or key in their names; Saga detects them from the audio.
+        const detected = p.source === 3;
+        const name = detected
+          ? `${p.prefix}_${base}_${String(i + 1).padStart(2, "0")}`
+          : `${p.prefix}_${base}${bpm ? `_${bpm}` : ""}${keyName ? `_${keyName}` : ""}_${String(i + 1).padStart(2, "0")}`;
+        const key = keyName ? (KEYS[keyName] ?? [NOTES.indexOf(keyName), 2]) : null;
+        const kindShape = loop ? (cat === "Drums" ? "drums" : cat === "Pad" ? "pad" : "melodic") : cat === "FX" || cat === "Bass" ? "long" : "hit";
+        const sub = loop ? "Loops" : "One Shots";
+        rows.push({
+          id: id++,
+          sourceId: p.source,
+          path: `${SOURCES[p.source - 1].path}/${p.pack}/${sub}/${name}.wav`,
+          name,
+          ext: r() > 0.85 ? "aif" : "wav",
+          dir: p.source === 3 ? "" : `${p.pack}/${sub}`,
+          pack: p.source === 3 ? "Recordings" : p.pack,
+          duration,
+          sampleRate: r() > 0.5 ? 44100 : 48000,
+          channels: r() > 0.3 ? 2 : 1,
+          bitDepth: 24,
+          bpm: detected && bpm ? bpm - 0.2 : bpm,
+          bpmSource: bpm ? (detected ? "audio" : "name") : null,
+          key: keyName,
+          keySource: keyName ? (detected ? "audio" : "name") : null,
+          keyPc: key ? key[0] : null,
+          keyMode: key ? key[1] : null,
+          camelot: null,
+          kind: loop ? "loop" : "oneshot",
+          category: cat,
+          tags: [...p.tags],
+          userTags: [],
+          peakDb: -0.3 - r() * 6,
+          loudness: -6 - r() * 12,
+          peaks: b64(envelope(kindShape, r, Math.max(4, bars * 4))),
+          status: 1,
+          favorite: r() > 0.9,
+          online: true,
+          playCount: 0,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+const ROWS = build();
+const collections: Collection[] = [
+  { id: 1, name: "Nightdrive EP", color: "#D9A441", count: 0 },
+  { id: 2, name: "Go-to kicks", color: "#B887D6", count: 0 },
+];
+const members = new Map<number, Set<number>>([
+  [1, new Set(ROWS.filter((r) => r.pack === "Nightdrive Synthwave").slice(0, 8).map((r) => r.id))],
+  [2, new Set(ROWS.filter((r) => r.category === "Kick").slice(0, 5).map((r) => r.id))],
+]);
+
+// ---- sound map and similarity: clusters by category, like the real map ----
+
+const CENTERS: [number, number][] = [
+  [0.24, 0.3], [0.5, 0.18], [0.79, 0.26], [0.59, 0.46], [0.23, 0.66], [0.5, 0.74], [0.78, 0.7], [0.89, 0.49], [0.12, 0.88],
+];
+const ORDER: Record<string, number[]> = {
+  timbre: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+  pitch: [4, 7, 1, 8, 0, 6, 5, 2, 3],
+  envelope: [2, 0, 5, 1, 3, 8, 7, 4, 6],
+};
+
+function gauss(r: () => number) {
+  return Math.sqrt(-2 * Math.log(Math.max(1e-6, r()))) * Math.cos(2 * Math.PI * r());
+}
+
+function position(row: SampleRow, aspect: string): [number, number] {
+  const g = groupOf(row.category);
+  const [cx, cy] = CENTERS[(ORDER[aspect] ?? ORDER.timbre)[g]];
+  const r = rng(row.id * 31 + aspect.length);
+  return [Math.min(1, Math.max(0, cx + gauss(r) * 0.055)), Math.min(1, Math.max(0, cy + gauss(r) * 0.05))];
+}
+
+function similarTo(point: (aspect: string) => [number, number], kind: string | null, sourceId: number | null, aspect: string, skip?: number) {
+  const aspects = aspect === "overall" ? ["timbre", "pitch", "envelope"] : [aspect];
+  const dist = (r: SampleRow) =>
+    aspects.reduce((sum, a) => {
+      const [x, y] = position(r, a);
+      const [px, py] = point(a);
+      return sum + Math.hypot(x - px, y - py);
+    }, 0) / aspects.length;
+  return ROWS.filter((r) => r.id !== skip && (!kind || r.kind === kind) && (sourceId == null || r.sourceId === sourceId))
+    .map((row) => ({ row, d: dist(row) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 40)
+    .map(({ row, d }) => ({ row, score: Math.max(0, Math.min(1, 1 - d / 0.45)) }));
+}
+
+const layouts = new Map<string, number[]>();
+
+function soundMap(kind: string | null, aspect: string) {
+  const rows = ROWS.filter((r) => !kind || r.kind === kind);
+  const bytes = new Uint8Array(rows.length * 12);
+  const view = new DataView(bytes.buffer);
+  const counts = new Map<number, { n: number; x: number; y: number }>();
+  rows.forEach((r, i) => {
+    const [x, y] = position(r, aspect);
+    const g = groupOf(r.category);
+    view.setInt32(i * 12, r.id, true);
+    view.setUint16(i * 12 + 4, Math.round(x * 65535), true);
+    view.setUint16(i * 12 + 6, Math.round(y * 65535), true);
+    bytes[i * 12 + 8] = g;
+    bytes[i * 12 + 9] = Math.round(Math.min(1, Math.max(0, [0.15, 0.55, 0.95, 0.7, 0.2, 0.5, 0.45, 0.8, 0.5][g] + gauss(rng(r.id)) * 0.12)) * 255);
+    bytes[i * 12 + 10] = Math.round(Math.min(1, Math.max(0, ((r.peakDb ?? -6) + 18) / 18)) * 255);
+    const c = counts.get(g) ?? { n: 0, x: 0, y: 0 };
+    counts.set(g, { n: c.n + 1, x: c.x + x, y: c.y + y });
+  });
+  const key = `${kind ?? "all"}-${aspect}-1`;
+  layouts.set(key, rows.map((r) => r.id));
+  return {
+    key,
+    count: rows.length,
+    points: b64(bytes),
+    labels: [...counts.entries()].filter(([g]) => g !== 8).map(([group, c]) => ({ group, x: c.x / c.n, y: c.y / c.n, count: c.n })),
+    described: ROWS.length,
+    pending: 0,
+  };
+}
+
+let recordTimer: number | undefined;
+
+function matches(r: SampleRow, f: Filters, omit?: string): boolean {
+  const words = (f.text ?? "").toLowerCase().split(/\s+/).filter((w) => w && !w.includes(":"));
+  const hay = `${r.name} ${r.dir} ${r.category} ${r.tags.join(" ")}`.toLowerCase();
+  if (words.some((w) => (w.startsWith("-") ? hay.includes(w.slice(1)) : !hay.includes(w)))) return false;
+  if (omit !== "kind" && f.kind && r.kind !== f.kind) return false;
+  if (omit !== "cat" && f.categories?.length && !f.categories.includes(r.category ?? "")) return false;
+  if (omit !== "bpm" && (f.bpmMin != null || f.bpmMax != null)) {
+    if (r.bpm == null) return false;
+    const inRange = (b: number) => (f.bpmMin == null || b >= f.bpmMin) && (f.bpmMax == null || b <= f.bpmMax);
+    if (!(inRange(r.bpm) || (f.halfDouble && (inRange(r.bpm * 2) || inRange(r.bpm / 2))))) return false;
+  }
+  if (omit !== "key" && f.key) {
+    const set = f.key.compatible ? compatibleKeys(f.key.pc, f.key.mode) : [{ pc: f.key.pc, mode: f.key.mode }];
+    if (r.keyPc == null) {
+      if (!f.key.includeUnpitched) return false;
+    } else if (r.keyMode === 2) {
+      if (r.keyPc !== f.key.pc && !f.key.rootInScale) return false;
+    } else if (!set.some((k) => k.pc === r.keyPc && k.mode === r.keyMode)) return false;
+  }
+  if (omit !== "dur") {
+    if (f.durMin != null && (r.duration ?? 0) < f.durMin) return false;
+    if (f.durMax != null && (r.duration ?? 0) > f.durMax) return false;
+  }
+  if (f.formats?.length && !f.formats.some((x) => r.ext.startsWith(x.slice(0, 3)))) return false;
+  if (f.channels && (f.channels === 1 ? r.channels !== 1 : (r.channels ?? 0) < 2)) return false;
+  if (f.sampleRates?.length && !f.sampleRates.includes(r.sampleRate ?? 0)) return false;
+  if (f.tags?.some((t) => !r.tags.includes(t))) return false;
+  if (f.excludeTags?.some((t) => r.tags.includes(t))) return false;
+  if (f.favorites && !r.favorite) return false;
+  if (f.collectionId != null && !members.get(f.collectionId)?.has(r.id)) return false;
+  if (f.sourceId != null && r.sourceId !== f.sourceId) return false;
+  if (f.dir && !(r.dir === f.dir || r.dir.startsWith(`${f.dir}/`))) return false;
+  if (f.recent === "played" && r.playCount === 0) return false;
+  return true;
+}
+
+function query(req: QueryRequest) {
+  let rows = ROWS.filter((r) => matches(r, req.filters));
+  const dir = req.desc ? -1 : 1;
+  const by = (k: (r: SampleRow) => number | string | null) =>
+    rows.sort((a, b) => {
+      const x = k(a) ?? Infinity;
+      const y = k(b) ?? Infinity;
+      return (x < y ? -1 : x > y ? 1 : 0) * dir;
+    });
+  if (req.sort === "name") by((r) => r.name.toLowerCase());
+  else if (req.sort === "bpm") by((r) => r.bpm);
+  else if (req.sort === "duration") by((r) => r.duration);
+  else if (req.sort === "key") by((r) => (r.keyPc == null ? null : r.keyPc * 3 + (r.keyMode ?? 0)));
+  else if (req.sort === "random") rows = rows.map((r) => [((r.id * 2654435761 + req.seed) % 4294967291) >>> 0, r] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+  return { total: rows.length, offset: req.offset, rows: rows.slice(req.offset, req.offset + req.limit) };
+}
+
+function facets(f: Filters): Facets {
+  const all = ROWS.filter((r) => matches(r, f));
+  const noKind = ROWS.filter((r) => matches(r, f, "kind"));
+  const noCat = ROWS.filter((r) => matches(r, f, "cat"));
+  const cats = new Map<string, number>();
+  for (const r of noCat) cats.set(r.category!, (cats.get(r.category!) ?? 0) + 1);
+  const bpmHist = new Array(BPM_HIST_BINS).fill(0);
+  for (const r of ROWS.filter((r) => matches(r, f, "bpm"))) {
+    if (r.bpm == null) continue;
+    const b = Math.floor((r.bpm - BPM_HIST_MIN) / BPM_HIST_STEP);
+    if (b >= 0 && b < BPM_HIST_BINS) bpmHist[b]++;
+  }
+  const durHist = new Array(DUR_HIST_BINS).fill(0);
+  const lo = Math.log(DUR_HIST_MIN);
+  const hi = Math.log(DUR_HIST_MAX);
+  for (const r of ROWS.filter((r) => matches(r, f, "dur"))) {
+    const x = Math.floor(((Math.log(r.duration!) - lo) / (hi - lo)) * DUR_HIST_BINS);
+    durHist[Math.max(0, Math.min(DUR_HIST_BINS - 1, x))]++;
+  }
+  const keys = new Array(24).fill(0);
+  for (const r of ROWS.filter((r) => matches(r, f, "key"))) if (r.keyMode === 0 || r.keyMode === 1) keys[r.keyPc! * 2 + r.keyMode]++;
+  const tags = new Map<string, number>();
+  for (const r of all) for (const t of r.tags) tags.set(t, (tags.get(t) ?? 0) + 1);
+  return {
+    total: all.length,
+    loops: noKind.filter((r) => r.kind === "loop").length,
+    oneshots: noKind.filter((r) => r.kind === "oneshot").length,
+    categories: [...cats.entries()],
+    bpmHist,
+    durHist,
+    keys,
+    tags: [...tags.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12),
+  };
+}
+
+interface MockParams {
+  rate: number;
+  mode: string;
+  semitones: number;
+  reverse: boolean;
+  regionStart: number | null;
+  regionEnd: number | null;
+}
+let playing: { id: number; duration: number; looping: boolean; params: MockParams; timeline: number; at: number; paused: boolean } | null = null;
+
+function playbackEvent(state: string) {
+  if (!playing) return;
+  const p = playing.params;
+  const rs = p.regionStart ?? 0;
+  const re = p.regionEnd ?? playing.duration;
+  const processed = p.mode === "repitch" ? Math.abs(p.rate - 1) > 1e-4 : Math.abs(p.rate - 1) > 1e-4 || Math.abs(p.semitones) > 1e-3;
+  void emit("playback", {
+    id: playing.id,
+    state,
+    timeline: playing.timeline,
+    length: re - rs,
+    rate: processed ? p.rate : 1,
+    reverse: p.reverse,
+    regionStart: rs,
+    regionEnd: re,
+    looping: playing.looping,
+    message: null,
+  });
+}
+
+/** Where the mock "playhead" is along the timeline right now. */
+function mockTimeline(): number {
+  if (!playing) return 0;
+  if (playing.paused) return playing.timeline;
+  const p = playing.params;
+  const length = (p.regionEnd ?? playing.duration) - (p.regionStart ?? 0);
+  const t = playing.timeline + ((performance.now() - playing.at) / 1000) * p.rate;
+  return playing.looping && length > 0 ? t % length : Math.min(t, length);
+}
+
+export function installMockBackend() {
+  mockWindows("main");
+  mockIPC(
+    (cmd, raw) => {
+      const args = (raw ?? {}) as Record<string, unknown>;
+      switch (cmd) {
+        case "list_sources":
+          return SOURCES.map((s) => ({ ...s, count: ROWS.filter((r) => r.sourceId === s.id).length }));
+        case "list_dirs": {
+          const src = args.sourceId as number;
+          const parent = args.dir as string;
+          const kids = new Map<string, { count: number; deeper: boolean }>();
+          for (const r of ROWS.filter((r) => r.sourceId === src && r.dir && (parent === "" || r.dir.startsWith(`${parent}/`)))) {
+            const rest = parent ? r.dir.slice(parent.length + 1) : r.dir;
+            const [child, ...more] = rest.split("/");
+            const e = kids.get(child) ?? { count: 0, deeper: false };
+            e.count++;
+            e.deeper ||= more.length > 0;
+            kids.set(child, e);
+          }
+          return [...kids.entries()].map(([name, e]) => ({ name, dir: parent ? `${parent}/${name}` : name, count: e.count, hasChildren: e.deeper }));
+        }
+        case "query_samples":
+          return query(args.request as QueryRequest);
+        case "get_facets":
+          return facets(args.filters as Filters);
+        case "get_sample":
+          return ROWS.find((r) => r.id === args.id) ?? null;
+        case "library_stats":
+          return {
+            total: ROWS.length,
+            favorites: ROWS.filter((r) => r.favorite).length,
+            loops: ROWS.filter((r) => r.kind === "loop").length,
+            oneshots: ROWS.filter((r) => r.kind === "oneshot").length,
+            recentlyAdded: 24,
+            played: ROWS.filter((r) => r.playCount > 0).length,
+          };
+        case "index_progress":
+          return { scanning: false, found: 0, done: 812, total: 2400, watching: 3, refreshing: true };
+        case "find_similar": {
+          const target = ROWS.find((r) => r.id === args.id) ?? null;
+          if (!target) return { target: null, items: [], described: ROWS.length, pending: 0, message: "Sample not found" };
+          const items = similarTo((a) => position(target, a), target.kind, args.sourceId as number | null, args.aspect as string, target.id);
+          return { target, items, described: ROWS.length, pending: 0, message: null };
+        }
+        case "similar_to_file":
+        case "similar_to_recording":
+        case "stop_recording": {
+          window.clearInterval(recordTimer);
+          const like = ROWS.find((r) => r.category === "Kick")!;
+          return { target: null, items: similarTo((a) => position(like, a), null, args.sourceId as number | null, args.aspect as string), described: ROWS.length, pending: 0, message: null };
+        }
+        case "start_recording": {
+          const started = performance.now();
+          window.clearInterval(recordTimer);
+          recordTimer = window.setInterval(() => {
+            const seconds = (performance.now() - started) / 1000;
+            void emit("record-level", { level: 0.05 + Math.abs(Math.sin(seconds * 7)) * 0.2, seconds, done: seconds >= 8 });
+            if (seconds >= 8) window.clearInterval(recordTimer);
+          }, 50);
+          return null;
+        }
+        case "cancel_recording":
+          window.clearInterval(recordTimer);
+          return null;
+        case "sound_map":
+          return soundMap(args.kind as string | null, args.aspect as string);
+        case "map_matches": {
+          const ids = layouts.get(args.key as string);
+          if (!ids) throw new Error("The sound map changed. Reload it.");
+          const f = args.filters as Filters;
+          const bits = new Uint8Array(Math.ceil(ids.length / 8));
+          let matched = 0;
+          ids.forEach((id, i) => {
+            const r = ROWS.find((x) => x.id === id)!;
+            if (matches(r, f)) {
+              bits[i >> 3] |= 1 << (i & 7);
+              matched++;
+            }
+          });
+          return { bits: matched === ids.length ? null : b64(bits), matched };
+        }
+        case "set_window_mode":
+          return null;
+        case "set_ui_scale":
+          // Stands in for the webview zoom.
+          document.documentElement.style.zoom = String(args.scale);
+          return null;
+        case "set_favorite":
+          for (const id of args.ids as number[]) {
+            const r = ROWS.find((x) => x.id === id);
+            if (r) r.favorite = args.favorite as boolean;
+          }
+          return null;
+        case "set_user_tags": {
+          const r = ROWS.find((x) => x.id === args.id)!;
+          r.userTags = (args.tags as string[]).map((t) => t.toLowerCase());
+          r.tags = [...new Set([...r.tags, ...r.userTags])];
+          return r;
+        }
+        case "list_collections":
+          return collections.map((c) => ({ ...c, count: members.get(c.id)?.size ?? 0 }));
+        case "create_collection": {
+          const id = collections.length + 1;
+          collections.push({ id, name: args.name as string, color: args.color as string, count: 0 });
+          members.set(id, new Set());
+          return id;
+        }
+        case "add_to_collection":
+          for (const id of args.ids as number[]) members.get(args.collectionId as number)?.add(id);
+          return null;
+        case "sample_collections":
+          return [...members.entries()].filter(([, s]) => s.has(args.id as number)).map(([c]) => c);
+        case "play": {
+          const r = ROWS.find((x) => x.id === args.id)!;
+          r.playCount++;
+          const params = args.params as MockParams;
+          const start = args.start as number | null;
+          const rs = params.regionStart ?? 0;
+          const re = params.regionEnd ?? r.duration ?? 1;
+          const timeline = start == null ? 0 : params.reverse ? re - start : start - rs;
+          playing = { id: r.id, duration: r.duration ?? 1, looping: args.looping as boolean, params, timeline: Math.max(0, timeline), at: performance.now(), paused: false };
+          setTimeout(() => playbackEvent("playing"), 30);
+          return null;
+        }
+        case "set_params":
+          if (playing) {
+            playing.timeline = mockTimeline();
+            playing.at = performance.now();
+            playing.params = args.params as MockParams;
+            playbackEvent(playing.paused ? "paused" : "playing");
+          }
+          return null;
+        case "pause":
+          if (playing) {
+            playing.timeline = mockTimeline();
+            playing.paused = true;
+            playbackEvent("paused");
+          }
+          return null;
+        case "resume":
+          if (playing) {
+            playing.at = performance.now();
+            playing.paused = false;
+            playbackEvent("playing");
+          }
+          return null;
+        case "seek":
+          if (playing) {
+            const p = playing.params;
+            const rs = p.regionStart ?? 0;
+            const re = p.regionEnd ?? playing.duration;
+            const t = Math.min(re, Math.max(rs, args.position as number));
+            playing.timeline = p.reverse ? re - t : t - rs;
+            playing.at = performance.now();
+            playbackEvent(playing.paused ? "paused" : "playing");
+          }
+          return null;
+        case "render_sample":
+          return new Promise((resolve) => setTimeout(() => resolve(`/Users/me/Music/Saga/Renders/${args.label || "render"}.wav`), 200));
+        case "save_variation":
+          return `/Users/me/Music/Saga/Variations/${args.label}.wav`;
+        case "waveform_detail": {
+          const r = ROWS.find((x) => x.id === args.id)!;
+          const env = Uint8Array.from(atob(r.peaks!), (c) => c.charCodeAt(0));
+          const d = r.duration ?? 1;
+          const n = args.buckets as number;
+          const a = (args.start as number) / d;
+          const b = (args.end as number) / d;
+          const channel = (wobble: number) => {
+            const out = new Uint8Array(n);
+            for (let i = 0; i < n; i++) {
+              const f = a + ((b - a) * (i + 0.5)) / n;
+              const v = env[Math.min(511, Math.floor(f * 512))];
+              out[i] = Math.min(255, Math.round(v * (0.85 + 0.15 * Math.abs(Math.sin(i * 0.37 + wobble)))));
+            }
+            return b64(out);
+          };
+          return { channels: r.channels === 1 ? [channel(0)] : [channel(0), channel(1.3)], duration: d };
+        }
+        case "list_installed_fonts":
+          // Families that ship with macOS, so the preview can draw them.
+          return [
+            ["American Typewriter", false], ["Andale Mono", true], ["Apple Color Emoji", false], ["Arial", false], ["Avenir", false],
+            ["Avenir Next", false], ["Baskerville", false], ["Courier New", true], ["Didot", false], ["Futura", false],
+            ["Georgia", false], ["Gill Sans", false], ["Helvetica", false], ["Helvetica Neue", false], ["Menlo", true],
+            ["Monaco", true], ["Optima", false], ["PT Mono", true], ["PT Sans", false], ["Rockwell", false],
+            ["Times New Roman", false], ["Trebuchet MS", false], ["Verdana", false],
+          ].map(([family, mono]) => ({ family, mono }));
+        case "list_output_devices":
+          return { devices: ["MacBook Pro Speakers", "Audio Interface"], current: null };
+        case "drag_icon":
+          return "/tmp/drag.png";
+        case "suggested_folders":
+          return [];
+        default:
+          return null;
+      }
+    },
+    { shouldMockEvents: true },
+  );
+}

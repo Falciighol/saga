@@ -1,0 +1,435 @@
+mod analysis;
+mod audio;
+mod chunks;
+mod commands;
+mod db;
+mod decode;
+mod detect;
+mod dsp;
+mod features;
+mod fonts;
+mod indexer;
+mod keys;
+mod map;
+mod meta;
+mod model;
+mod query;
+mod record;
+mod render;
+mod sounds;
+
+use audio::Engine;
+use db::Db;
+use indexer::{Emit, Indexer};
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+
+/// Sound maps by kind (one-shots, loops or both) and aspect.
+type Layouts = HashMap<(Option<u8>, sounds::Aspect), Arc<map::Layout>>;
+
+pub struct AppState {
+    pub db: Arc<Db>,
+    pub indexer: Arc<Indexer>,
+    pub engine: Engine,
+    /// Image shown under the cursor while dragging a sample out of the app.
+    pub drag_icon: PathBuf,
+    /// Where renders and saved variations go (~/Music by default).
+    pub music_dir: PathBuf,
+    /// Last file decoded for the editor's detailed waveform.
+    pub detail: Mutex<Option<(i64, Arc<render::Detail>)>>,
+    /// Features of every described sample, rebuilt when the library changes.
+    pub sounds: Mutex<Option<Arc<sounds::SoundIndex>>>,
+    pub layouts: Mutex<Layouts>,
+    pub layout_serial: AtomicU64,
+    pub recorder: record::Recorder,
+    /// Features of the last recording, so it can be compared again by another aspect.
+    pub last_recording: Mutex<Option<Vec<f32>>>,
+    /// The full window's position and size while the mini player is showing.
+    pub full_window: Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>>,
+    /// The interface zoom from Settings; window sizes grow with it.
+    pub ui_scale: Mutex<f64>,
+}
+
+impl AppState {
+    pub fn new(db: Arc<Db>, indexer: Arc<Indexer>, engine: Engine, drag_icon: PathBuf, music_dir: PathBuf) -> AppState {
+        AppState {
+            db,
+            indexer,
+            engine,
+            drag_icon,
+            music_dir,
+            detail: Default::default(),
+            sounds: Default::default(),
+            layouts: Default::default(),
+            layout_serial: AtomicU64::new(0),
+            recorder: Default::default(),
+            last_recording: Default::default(),
+            full_window: Default::default(),
+            ui_scale: Mutex::new(1.0),
+        }
+    }
+}
+
+/// A small waveform glyph for drag previews, generated so no binary asset is needed.
+fn write_drag_icon(path: &Path) -> Result<(), String> {
+    const S: u32 = 64;
+    let mut rgba = vec![0u8; (S * S * 4) as usize];
+    let bars = [10, 18, 30, 44, 26, 38, 52, 34, 22, 40, 28, 16, 8];
+    let bar_w = 2u32;
+    let gap = 2u32;
+    let total = bars.len() as u32 * (bar_w + gap) - gap;
+    let x0 = (S - total) / 2;
+    for y in 0..S {
+        for x in 0..S {
+            let i = ((y * S + x) * 4) as usize;
+            // Rounded square background.
+            let (dx, dy) = ((x as f32 - 31.5).abs() - 24.0, (y as f32 - 31.5).abs() - 24.0);
+            let dist = dx.max(0.0).hypot(dy.max(0.0)) + dx.max(dy).min(0.0) - 6.0;
+            if dist <= 0.0 {
+                rgba[i..i + 4].copy_from_slice(&[27, 29, 33, 235]);
+            }
+        }
+    }
+    for (b, &h) in bars.iter().enumerate() {
+        let bx = x0 + b as u32 * (bar_w + gap);
+        let top = 32 - h / 2 * 38 / 52;
+        let bottom = 32 + h / 2 * 38 / 52;
+        for y in top..=bottom {
+            for x in bx..bx + bar_w {
+                let i = ((y * S + x) * 4) as usize;
+                rgba[i..i + 4].copy_from_slice(&[236, 234, 230, 255]);
+            }
+        }
+    }
+    let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(file), S, S);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    let mut w = enc.write_header().map_err(|e| e.to_string())?;
+    w.write_image_data(&rgba).map_err(|e| e.to_string())
+}
+
+/// Registers every command the frontend calls.
+pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .invoke_handler(tauri::generate_handler![
+            commands::list_sources,
+            commands::add_sources,
+            commands::remove_source,
+            commands::rescan_source,
+            commands::list_dirs,
+            commands::query_samples,
+            commands::get_facets,
+            commands::get_sample,
+            commands::library_stats,
+            commands::index_progress,
+            commands::set_favorite,
+            commands::set_user_tags,
+            commands::list_collections,
+            commands::create_collection,
+            commands::update_collection,
+            commands::delete_collection,
+            commands::add_to_collection,
+            commands::remove_from_collection,
+            commands::sample_collections,
+            commands::ids_for_paths,
+            commands::play,
+            commands::pause,
+            commands::resume,
+            commands::stop,
+            commands::seek,
+            commands::set_loop,
+            commands::set_volume,
+            commands::list_output_devices,
+            commands::list_installed_fonts,
+            commands::set_output_device,
+            commands::drag_icon,
+            commands::suggested_folders,
+            commands::set_params,
+            commands::set_click,
+            commands::render_sample,
+            commands::export_sample,
+            commands::save_variation,
+            commands::waveform_detail,
+            commands::find_similar,
+            commands::similar_to_file,
+            commands::start_recording,
+            commands::stop_recording,
+            commands::cancel_recording,
+            commands::similar_to_recording,
+            commands::sound_map,
+            commands::map_matches,
+            commands::set_window_mode,
+            commands::set_ui_scale,
+        ])
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    with_commands(tauri::Builder::default())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_drag::init())
+        .setup(|app| {
+            let data_dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&data_dir)?;
+            let db = Arc::new(Db::open(&data_dir.join("library.db")).map_err(|e| e.to_string())?);
+
+            let handle = app.handle().clone();
+            let emit: Emit = Arc::new(move |name, payload| {
+                let _ = handle.emit(name, payload);
+            });
+            let indexer = Indexer::start(db.clone(), emit);
+
+            let handle = app.handle().clone();
+            let engine = Engine::start(
+                db.get_setting("output_device"),
+                0.8,
+                Arc::new(move |ev| {
+                    let _ = handle.emit("playback", ev);
+                }),
+            );
+
+            let cache_dir = app.path().app_cache_dir()?;
+            std::fs::create_dir_all(&cache_dir)?;
+            let drag_icon = cache_dir.join("drag-icon.png");
+            if let Err(e) = write_drag_icon(&drag_icon) {
+                eprintln!("saga: could not write drag icon: {e}");
+            }
+
+            let music_dir = app.path().audio_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Music")))?;
+            app.manage(AppState::new(db, indexer.clone(), engine, drag_icon, music_dir));
+            indexer.resume_all();
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running Saga");
+}
+
+/// Exercises the commands through Tauri's IPC layer with the exact JSON the frontend sends,
+/// so argument names and shapes can't silently drift apart. No window or audio device is used.
+#[cfg(test)]
+mod ipc_tests {
+    use super::*;
+    use serde_json::{json, Value};
+    use std::time::{Duration, Instant};
+    use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime, INVOKE_KEY};
+    use tauri::{WebviewWindow, WebviewWindowBuilder};
+
+    fn call(w: &WebviewWindow<MockRuntime>, cmd: &str, body: Value) -> Result<Value, Value> {
+        get_ipc_response(
+            w,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "tauri://localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            },
+        )
+        .map(|b| b.deserialize::<Value>().unwrap())
+    }
+
+    fn write_wav(path: &Path, seconds: f32) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let spec = hound::WavSpec { channels: 1, sample_rate: 44100, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        for i in 0..(44100.0 * seconds) as usize {
+            w.write_sample(((i as f32 / 44100.0 * 110.0 * std::f32::consts::TAU).sin() * 9000.0) as i16).unwrap();
+        }
+        w.finalize().unwrap();
+    }
+
+    /// The filters object exactly as `backendFilters()` in src/store/browse.ts builds it.
+    fn ui_filters(extra: Value) -> Value {
+        let mut f = json!({
+            "text": "", "kind": null, "categories": [], "bpmMin": null, "bpmMax": null, "halfDouble": false,
+            "key": null, "durMin": null, "durMax": null, "formats": [], "channels": null, "sampleRates": [],
+            "tags": [], "excludeTags": []
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            f[k] = v.clone();
+        }
+        f
+    }
+
+    #[test]
+    fn frontend_calls_round_trip() {
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_wav(&lib.path().join("Nightdrive/Loops/Nightdrive_Bass_Loop_124_Am.wav"), 7.742);
+        write_wav(&lib.path().join("Nightdrive/Loops/Nightdrive_Lead_Loop_124_Bbm.wav"), 7.742);
+        write_wav(&lib.path().join("Drums/One Shots/Kick_Dusty_03.wav"), 0.4);
+
+        let app = with_commands(mock_builder()).build(mock_context(noop_assets())).unwrap();
+        let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
+        let indexer = Indexer::start(db.clone(), Arc::new(|_, _| {}));
+        let engine = Engine::start(None, 0.8, Arc::new(|_| {}));
+        app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music")));
+        let w = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+
+        let lib_path = lib.path().to_string_lossy().to_string();
+        let ids = call(&w, "add_sources", json!({ "paths": [format!("{lib_path}/")] })).unwrap();
+        let source_id = ids[0].as_i64().unwrap();
+        // Adding a file (not a folder) is ignored rather than failing.
+        assert_eq!(call(&w, "add_sources", json!({ "paths": [format!("{lib_path}/Drums/One Shots/Kick_Dusty_03.wav")] })), Ok(json!([])));
+
+        let start = Instant::now();
+        std::thread::sleep(Duration::from_millis(150));
+        while !indexer.is_idle() {
+            assert!(start.elapsed() < Duration::from_secs(20));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+
+        let request = |filters: Value| {
+            json!({ "request": { "filters": filters, "sort": "relevance", "desc": false, "offset": 0, "limit": 100, "seed": 1 } })
+        };
+        let all = call(&w, "query_samples", request(ui_filters(json!({})))).unwrap();
+        assert_eq!(all["total"], 3);
+
+        let am = json!({ "pc": 9, "mode": 1, "compatible": true, "includeUnpitched": false, "rootInScale": true });
+        let res = call(&w, "query_samples", request(ui_filters(json!({ "kind": "loop", "bpmMin": 120, "bpmMax": 128, "key": am })))).unwrap();
+        assert_eq!(res["total"], 1, "{res}");
+        let bass = &res["rows"][0];
+        assert_eq!(bass["name"], "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!(bass["bpm"], 124.0);
+        assert_eq!(bass["camelot"], "8A");
+        assert_eq!(bass["kind"], "loop");
+        assert_eq!(bass["pack"], "Nightdrive");
+        assert!(bass["peaks"].as_str().unwrap().len() > 600);
+        let bass_id = bass["id"].as_i64().unwrap();
+
+        // View filters are added on top by the browse store.
+        let folder = call(&w, "query_samples", request(ui_filters(json!({ "sourceId": source_id, "dir": "Drums" })))).unwrap();
+        assert_eq!(folder["rows"][0]["name"], "Kick_Dusty_03");
+        let searched = call(&w, "query_samples", request(ui_filters(json!({ "text": "nightdrive -lead" })))).unwrap();
+        assert_eq!(searched["total"], 1);
+
+        let facets = call(&w, "get_facets", json!({ "filters": ui_filters(json!({ "kind": "loop" })) })).unwrap();
+        assert_eq!(facets["loops"], 2);
+        assert_eq!(facets["oneshots"], 1);
+
+        let dirs = call(&w, "list_dirs", json!({ "sourceId": source_id, "dir": "" })).unwrap();
+        assert_eq!(dirs.as_array().unwrap().len(), 2);
+        assert_eq!(dirs[1]["hasChildren"], true);
+
+        call(&w, "set_favorite", json!({ "ids": [bass_id], "favorite": true })).unwrap();
+        assert_eq!(call(&w, "library_stats", json!({})).unwrap()["favorites"], 1);
+
+        let cid = call(&w, "create_collection", json!({ "name": "Nightdrive EP", "color": "#D9A441" })).unwrap();
+        call(&w, "add_to_collection", json!({ "collectionId": cid, "ids": [bass_id] })).unwrap();
+        assert_eq!(call(&w, "list_collections", json!({})).unwrap()[0]["count"], 1);
+        assert_eq!(call(&w, "sample_collections", json!({ "id": bass_id })).unwrap(), json!([cid]));
+        call(&w, "update_collection", json!({ "id": cid, "name": "EP", "color": null })).unwrap();
+
+        let tagged = call(&w, "set_user_tags", json!({ "id": bass_id, "tags": ["Keeper"] })).unwrap();
+        assert_eq!(tagged["userTags"], json!(["keeper"]));
+
+        let path = bass["path"].as_str().unwrap();
+        assert_eq!(call(&w, "ids_for_paths", json!({ "paths": [path] })).unwrap(), json!([bass_id]));
+        assert!(call(&w, "get_sample", json!({ "id": bass_id })).unwrap()["favorite"].as_bool().unwrap());
+
+        // Phase 3: detection, Find similar and the sound map.
+        assert_eq!(bass["bpmSource"], "name");
+        assert_eq!(bass["keySource"], "name");
+        let lead_id = call(&w, "query_samples", request(ui_filters(json!({ "text": "lead" })))).unwrap()["rows"][0]["id"].as_i64().unwrap();
+        let similar = call(&w, "find_similar", json!({ "id": bass_id, "aspect": "overall", "sourceId": null, "limit": 10 })).unwrap();
+        assert_eq!(similar["target"]["id"], bass_id);
+        assert_eq!(similar["described"], 3);
+        // Only loops are compared with a loop, and the identical-sounding one scores highest.
+        assert_eq!(similar["items"].as_array().unwrap().len(), 1, "{similar}");
+        assert_eq!(similar["items"][0]["row"]["id"], lead_id);
+        assert!(similar["items"][0]["score"].as_f64().unwrap() > 0.9);
+        for aspect in ["timbre", "pitch", "envelope"] {
+            assert!(call(&w, "find_similar", json!({ "id": bass_id, "aspect": aspect, "sourceId": source_id, "limit": null })).is_ok());
+        }
+        let kick_path = format!("{lib_path}/Drums/One Shots/Kick_Dusty_03.wav");
+        let by_file = call(&w, "similar_to_file", json!({ "path": kick_path, "aspect": "overall", "sourceId": null, "limit": 5 })).unwrap();
+        assert_eq!(by_file["items"][0]["row"]["name"], "Kick_Dusty_03");
+        assert!(call(&w, "cancel_recording", json!({})).is_ok());
+        assert!(call(&w, "similar_to_recording", json!({ "aspect": "overall", "sourceId": null, "limit": 5 })).is_err());
+
+        let map = call(&w, "sound_map", json!({ "kind": null, "aspect": "timbre" })).unwrap();
+        assert_eq!(map["count"], 3);
+        assert_eq!(base64::Engine::decode(&base64::engine::general_purpose::STANDARD, map["points"].as_str().unwrap()).unwrap().len(), 36);
+        let key = map["key"].as_str().unwrap();
+        let matches = call(&w, "map_matches", json!({ "key": key, "filters": ui_filters(json!({ "text": "nightdrive" })) })).unwrap();
+        assert_eq!(matches["matched"], 2);
+        assert!(matches["bits"].is_string());
+        let everything = call(&w, "map_matches", json!({ "key": key, "filters": ui_filters(json!({})) })).unwrap();
+        assert_eq!(everything["bits"], Value::Null);
+        assert_eq!(call(&w, "sound_map", json!({ "kind": "oneshot", "aspect": "overall" })).unwrap()["count"], 1);
+        assert!(call(&w, "set_window_mode", json!({ "mini": true, "onTop": true })).is_ok());
+        assert!(call(&w, "set_window_mode", json!({ "mini": false, "onTop": false })).is_ok());
+        assert!(call(&w, "set_ui_scale", json!({ "scale": 1.25 })).is_ok());
+        assert!(call(&w, "set_window_mode", json!({ "mini": true, "onTop": false })).is_ok());
+        assert!(call(&w, "set_window_mode", json!({ "mini": false, "onTop": false })).is_ok());
+        assert!(call(&w, "list_installed_fonts", json!({})).unwrap().as_array().is_some_and(|f| f.iter().all(|f| f["family"].is_string() && f["mono"].is_boolean())));
+
+        // Phase 2: processing, rendering and the editor's waveform.
+        let params = json!({
+            "rate": 1.25, "semitones": 2, "mode": "stretch", "formants": false, "reverse": true,
+            "regionStart": 0.0, "regionEnd": 3.871, "fadeIn": 0, "fadeOut": 0.01, "gainDb": -1.5,
+            "normalize": false, "crossfade": 0.01, "beat": 0.4839
+        });
+        let label = "155 BPM, Bm, reversed";
+        let rendered = call(&w, "render_sample", json!({ "id": bass_id, "params": params, "label": label })).unwrap();
+        let rendered = rendered.as_str().unwrap().to_string();
+        assert!(rendered.ends_with("Nightdrive_Bass_Loop_124_Am (155 BPM, Bm, reversed).wav"), "{rendered}");
+        let r = hound::WavReader::open(&rendered).unwrap();
+        assert!((r.duration() as f64 / 44_100.0 - 3.871 / 1.25).abs() < 0.01);
+        // Same request, same file; the click setting doesn't matter.
+        let mut no_click = params.clone();
+        no_click["beat"] = Value::Null;
+        let again = call(&w, "render_sample", json!({ "id": bass_id, "params": no_click, "label": label }));
+        assert_eq!(again, Ok(json!(rendered)));
+
+        let export = data.path().join("exported.wav");
+        call(&w, "export_sample", json!({ "id": bass_id, "params": params, "dest": export.to_string_lossy() })).unwrap();
+        assert!(export.exists());
+
+        let variation = call(&w, "save_variation", json!({ "id": bass_id, "params": params, "label": label })).unwrap();
+        assert!(variation.as_str().unwrap().contains("Saga/Variations"));
+        let sources = call(&w, "list_sources", json!({})).unwrap();
+        assert!(sources.as_array().unwrap().iter().any(|s| s["name"] == "Variations"));
+
+        let detail = call(&w, "waveform_detail", json!({ "id": bass_id, "start": 0.0, "end": 2.0, "buckets": 300 })).unwrap();
+        assert_eq!(detail["channels"].as_array().unwrap().len(), 1);
+        assert!((detail["duration"].as_f64().unwrap() - 7.742).abs() < 0.01);
+
+        // Transport commands accept the frontend's arguments without touching an audio device.
+        assert_eq!(call(&w, "play", json!({ "id": 999_999, "start": null, "looping": true, "params": params })), Err(json!("Sample not found")));
+        assert!(call(&w, "set_params", json!({ "params": params })).is_ok());
+        assert!(call(&w, "set_click", json!({ "on": true })).is_ok());
+        assert!(call(&w, "index_progress", json!({})).unwrap()["refreshing"].is_boolean());
+        for (cmd, body) in [
+            ("seek", json!({ "position": 1.5 })),
+            ("set_loop", json!({ "looping": false })),
+            ("set_volume", json!({ "volume": 0.5 })),
+            ("pause", json!({})),
+            ("resume", json!({})),
+            ("stop", json!({})),
+            ("index_progress", json!({})),
+            ("drag_icon", json!({})),
+            ("rescan_source", json!({ "id": source_id })),
+        ] {
+            assert!(call(&w, cmd, body).is_ok(), "{cmd}");
+        }
+
+        call(&w, "delete_collection", json!({ "id": cid })).unwrap();
+        call(&w, "remove_source", json!({ "id": source_id })).unwrap();
+        // Only the saved variation is left, indexed with the tempo and key from its name.
+        let left = call(&w, "query_samples", request(ui_filters(json!({})))).unwrap();
+        assert_eq!(left["total"], 1);
+        assert_eq!(left["rows"][0]["name"], "Nightdrive_Bass_Loop_124_Am (155 BPM, Bm, reversed)");
+        assert_eq!(left["rows"][0]["bpm"], 155.0);
+        assert_eq!(left["rows"][0]["key"], "Bm");
+    }
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Tauri's bundler runs actool with stdin closed. actool then fails to compile
+# the Icon Composer .icon ("Bad file descriptor") and can leave its ibtoold
+# daemon broken for later runs. Give it an empty stdin instead.
+exec /usr/bin/actool "$@" </dev/null

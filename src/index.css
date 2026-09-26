@@ -1,0 +1,179 @@
+@import "tailwindcss";
+@import "@fontsource-variable/instrument-sans";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/ibm-plex-sans";
+@import "@fontsource-variable/dm-sans";
+@import "@fontsource-variable/manrope";
+@import "@fontsource-variable/atkinson-hyperlegible-next";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource-variable/jetbrains-mono";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+
+/* Palette and font values are set on :root by src/lib/theme.ts and src/lib/fonts.ts; these are first-paint fallbacks.
+   Font files only load once something uses them, so bundling the unchosen ones costs nothing at runtime. */
+:root {
+  --bg: #0f1012;
+  --panel: #131417;
+  --raised: #1b1d21;
+  --raised2: #25282d;
+  --seg: #2c3036;
+  --line: #222529;
+  --line2: #31353b;
+  --text: #eceae6;
+  --text2: #a6a9af;
+  --text3: #868a91;
+  --wave: #4a4f57;
+  --wave2: #747981;
+  --accent: #9d8cff;
+  --accent-ink: #9d8cff;
+  --accent-wave: #9d8cff;
+  --on-accent: #131018;
+  --accent-soft: rgba(157, 140, 255, 0.14);
+  --overlay: rgba(6, 7, 8, 0.6);
+  --shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  --sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-raised2: var(--raised2);
+  --color-seg: var(--seg);
+  --color-line: var(--line);
+  --color-line2: var(--line2);
+  --color-text: var(--text);
+  --color-text2: var(--text2);
+  --color-text3: var(--text3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wave: var(--accent-wave);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+
+  --text-micro: 11px;
+  --text-small: 12px;
+  --text-ui: 12.5px;
+  --text-body: 13px;
+  --text-title: 15px;
+
+  --shadow-pop: var(--shadow);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* A desktop app, not a document: no rubber-band scrolling or text selection by default. */
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button {
+  cursor: default;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+input:focus-visible {
+  outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+@keyframes saga-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-pop {
+  animation: saga-pop 120ms ease-out;
+}
+
+@keyframes saga-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-soft-pulse {
+  animation: saga-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pop,
+  .animate-soft-pulse {
+    animation: none;
+  }
+}
+
+[data-drop-target="true"] {
+  background: var(--accent-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
