@@ -94,6 +94,62 @@ impl Key {
     }
 }
 
+/// Pitch classes of a scale given as semitones above `pc`, without repeats.
+pub fn scale_notes(pc: u8, intervals: &[u8]) -> Vec<u8> {
+    let mut notes: Vec<u8> = Vec::with_capacity(intervals.len());
+    for i in intervals {
+        let n = ((pc as i32 + *i as i32).rem_euclid(12)) as u8;
+        if !notes.contains(&n) {
+            notes.push(n);
+        }
+    }
+    notes
+}
+
+/// Pitch classes as a 12-bit mask, bit 0 = C.
+pub fn pc_mask(notes: &[u8]) -> u16 {
+    notes.iter().fold(0, |m, n| m | 1 << (n % 12))
+}
+
+/// Least `scale_fit` for a sample with no key to count as fitting a scale by its notes.
+/// On ~450 loops from real packs whose names state a key, 65% fit their own key this well,
+/// against 3% for the key a tritone away and 2% of ~340 drum and effect sounds (see
+/// `detect::report::scale_fit_report`). Stored profiles count every spectral peak, overtones
+/// included, so even a loop squarely in its key keeps a fair share of energy outside it.
+pub const MIN_SCALE_FIT: f32 = 0.2;
+
+/// How well a pitch profile sits inside a set of notes: 0 when no more of its energy falls on
+/// them than would on any notes of the same count (a noise burst), 1 when all of it does.
+/// None for a silent profile. Mirrors `scaleFit` in src/lib/theory.ts.
+pub fn scale_fit(chroma: &[f32; 12], mask: u16) -> Option<f32> {
+    let total: f32 = chroma.iter().sum();
+    let n = (mask & 0xFFF).count_ones() as f32;
+    if !(total > 0.0) || n == 0.0 {
+        return None;
+    }
+    if n >= 12.0 {
+        return Some(1.0);
+    }
+    let inside = (0..12).filter(|i| mask & 1 << i != 0).map(|i| chroma[i]).sum::<f32>() / total;
+    let chance = n / 12.0;
+    Some(((inside - chance) / (1.0 - chance)).clamp(0.0, 1.0))
+}
+
+/// Major and minor keys whose notes hold the scale: every note of a scale of five notes or
+/// fewer, all but one of a longer one. For a mode that's its parent key and relative, plus the
+/// keys a fifth either side (A Dorian: G, Em, C, Am, D, Bm).
+pub fn fitting_keys(pc: u8, intervals: &[u8]) -> Vec<Key> {
+    let notes = scale_notes(pc, intervals);
+    let need = if notes.len() <= 5 { notes.len() } else { (notes.len() - 1).min(7) };
+    (0..12)
+        .flat_map(|p| [Key::new(p, Mode::Major), Key::new(p, Mode::Minor)])
+        .filter(|k| {
+            let s = k.scale();
+            notes.iter().filter(|n| s.contains(n)).count() >= need
+        })
+        .collect()
+}
+
 fn letter_pc(c: char) -> Option<i32> {
     Some(match c.to_ascii_uppercase() {
         'C' => 0,
@@ -286,6 +342,52 @@ mod tests {
     fn compatible_keys_of_a_minor() {
         let names: Vec<_> = Key::new(9, Mode::Minor).compatible().iter().map(|k| k.name()).collect();
         assert_eq!(names, vec!["Am", "Em", "Dm", "C"]);
+    }
+
+    #[test]
+    fn keys_that_fit_a_scale() {
+        let names = |pc, s: &[u8]| {
+            let mut v: Vec<_> = fitting_keys(pc, s).iter().map(|k| k.name()).collect();
+            v.sort();
+            v
+        };
+        // A Dorian has the notes of G major.
+        assert_eq!(names(9, &[0, 2, 3, 5, 7, 9, 10]), vec!["Am", "Bm", "C", "D", "Em", "G"]);
+        // A minor pentatonic fits inside three relative pairs.
+        assert_eq!(names(9, &[0, 3, 5, 7, 10]), vec!["Am", "C", "Dm", "Em", "F", "G"]);
+        // Plain A minor: the keys that share at least six of its notes.
+        assert_eq!(names(9, &[0, 2, 3, 5, 7, 8, 10]), vec!["Am", "C", "Dm", "Em", "F", "G"]);
+        assert_eq!(scale_notes(11, &[0, 12, 1]), vec![11, 0]);
+    }
+
+    #[test]
+    fn scale_fit_measures_energy_inside_the_notes_against_chance() {
+        let a_minor = pc_mask(&scale_notes(9, &[0, 2, 3, 5, 7, 8, 10]));
+        assert_eq!(a_minor, 0b1010_1011_0101);
+        // A sound entirely on A, C and E fits A minor perfectly.
+        let mut chord = [0f32; 12];
+        chord[9] = 0.5;
+        chord[0] = 0.3;
+        chord[4] = 0.2;
+        assert_eq!(scale_fit(&chord, a_minor), Some(1.0));
+        // Spread evenly over all twelve notes, nothing fits better than chance.
+        assert!(scale_fit(&[1.0 / 12.0; 12], a_minor).unwrap() < 1e-6);
+        // Mostly outside: F♯ major (F♯, A♯, C♯) has nothing in A minor.
+        let mut fs = [0.02f32; 12];
+        fs[6] = 0.4;
+        fs[10] = 0.2;
+        fs[1] = 0.2;
+        assert_eq!(scale_fit(&fs, a_minor), Some(0.0));
+        // Half in, half out: a little better than chance for a five-note scale, worse than
+        // chance for a seven-note one (which covers more of the twelve notes).
+        let mut half = [0f32; 12];
+        half[9] = 0.5;
+        half[1] = 0.5;
+        let pent = pc_mask(&scale_notes(9, &[0, 3, 5, 7, 10]));
+        assert!((scale_fit(&half, pent).unwrap() - (0.5 - 5.0 / 12.0) / (7.0 / 12.0)).abs() < 1e-6);
+        assert_eq!(scale_fit(&half, a_minor), Some(0.0));
+        assert_eq!(scale_fit(&[0.0; 12], a_minor), None);
+        assert_eq!(scale_fit(&chord, 0), None);
     }
 
     #[test]

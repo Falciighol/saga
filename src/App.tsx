@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FilterBar } from "./components/FilterBar";
 import { MenuHost } from "./components/Menu";
 import { Editor } from "./components/Editor";
+import { LabView } from "./components/lab/LabView";
+import { onTransport } from "./store/lab";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { DropTarget, Toasts } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
@@ -55,6 +57,7 @@ export default function App() {
       }),
       events.onPlayback((e) => usePlayer.getState().handleEvent(e)),
       events.onRecordLevel((e) => useSimilar.getState().onLevel(e)),
+      events.onTransport(onTransport),
     ];
 
     // A desktop app shouldn't offer the web view's Reload/Inspect menu.
@@ -96,6 +99,8 @@ export default function App() {
           <main className="@container flex min-w-0 flex-1 flex-col">
             <Editor />
           </main>
+        ) : view === "lab" ? (
+          <LabView />
         ) : (
           <>
             <Sidebar />

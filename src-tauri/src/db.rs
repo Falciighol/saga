@@ -2,12 +2,14 @@
 
 use crate::analysis::{self, AudioInfo};
 use crate::features;
-use crate::keys::Key;
+use crate::keys::{self, Key};
 use crate::meta::{self, Kind, Resolved};
 use crate::model::*;
 use crate::query::{self, Omit};
 use base64::Engine as _;
 use parking_lot::Mutex;
+use rusqlite::functions::FunctionFlags;
+use rusqlite::types::ValueRef;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -250,6 +252,16 @@ fn configure(conn: &Connection) -> DbResult<()> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
+    // scale_fit(features, mask): how well a sample's stored pitch profile fits a set of notes
+    // (a 12-bit mask, bit 0 = C), 0–1, or NULL when it has no profile. Read straight from the
+    // feature blob, so filtering and sorting by it needs no extra columns or re-analysis.
+    conn.create_scalar_function("scale_fit", 2, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
+        let mask = ctx.get::<i64>(1)? as u16;
+        Ok(match ctx.get_raw(0) {
+            ValueRef::Blob(b) => features::chroma_from_blob(b).and_then(|c| keys::scale_fit(&c, mask)).map(f64::from),
+            _ => None,
+        })
+    })?;
     Ok(())
 }
 
@@ -560,7 +572,7 @@ impl Db {
     pub fn query(&self, req: &QueryRequest) -> DbResult<QueryResult> {
         let parsed = query::parse_search(&req.filters);
         let w = query::build_where(&parsed, Omit::Nothing, now());
-        let order = query::order_by(&req.sort, req.desc, w.has_text, req.seed);
+        let order = query::order_by(&req.sort, req.desc, w.has_text, req.seed, query::fit_mask(&parsed.filters));
         let conn = self.read.lock();
         let total: i64 = conn.query_row(
             &format!("SELECT COUNT(*) FROM samples s {} WHERE {}", w.join, w.clause),
@@ -586,6 +598,12 @@ impl Db {
             row_to_sample,
         )
         .optional()
+    }
+
+    /// The notes in a sample's stored description, or None until it has one.
+    pub fn pitch_profile(&self, id: i64) -> DbResult<Option<PitchProfile>> {
+        let blob: Option<Vec<u8>> = self.read.lock().query_row("SELECT features FROM samples WHERE id = ?", [id], |r| r.get(0)).optional()?.flatten();
+        Ok(blob.and_then(|b| features::from_blob(&b)).and_then(|f| features::pitch_profile(&f)))
     }
 
     /// Rows for these ids, in the same order (missing ones are skipped).
@@ -932,7 +950,7 @@ mod tests {
         assert_eq!(loops.len(), 3);
         let f = Filters { bpm_min: Some(122.0), bpm_max: Some(126.0), ..Default::default() };
         assert_eq!(names(&db, f), vec!["Nightdrive_Bass_Loop_124_Am"]);
-        let am = KeyFilter { pc: 9, mode: 1, compatible: true, include_unpitched: false, root_in_scale: true };
+        let am = KeyFilter { pc: 9, mode: 1, compatible: true, include_unpitched: false, root_in_scale: true, scale: None, by_notes: false };
         assert_eq!(
             names(&db, Filters { key: Some(am.clone()), ..Default::default() }),
             vec!["Nightdrive_Arp_Loop_128_Em", "Nightdrive_Bass_Loop_124_Am"]
@@ -940,6 +958,60 @@ mod tests {
         let exact = KeyFilter { compatible: false, include_unpitched: true, ..am };
         assert_eq!(names(&db, Filters { key: Some(exact), ..Default::default() }).len(), 3);
         assert_eq!(names(&db, Filters { text: "key:Gm".into(), ..Default::default() }), vec!["LoFi_Keys_Rhodes_Loop_120_Gm"]);
+        // A Phrygian has the notes of F major, so G minor fits and E minor doesn't.
+        let phrygian = KeyFilter { scale: Some(vec![0, 1, 3, 5, 7, 8, 10]), ..am };
+        assert_eq!(
+            names(&db, Filters { key: Some(phrygian), ..Default::default() }),
+            vec!["LoFi_Keys_Rhodes_Loop_120_Gm", "Nightdrive_Bass_Loop_124_Am"]
+        );
+    }
+
+    /// Stores a description whose pitch profile is `chroma`, the way analysis would.
+    fn describe_as(db: &Db, name: &str, chroma: [f32; 12]) -> i64 {
+        let mut f = vec![f32::NAN; features::LEN];
+        f[features::CHROMA].copy_from_slice(&chroma);
+        let conn = db.write.lock();
+        conn.execute("UPDATE samples SET features = ?, status = 1 WHERE name = ?", params![features::to_blob(&f), name]).unwrap();
+        conn.query_row("SELECT id FROM samples WHERE name = ?", [name], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn keyless_samples_pass_when_their_notes_fit() {
+        let (_d, db, _) = open();
+        // A kick tuned to A (with its fifth ringing) and a snare that's all noise; neither has a key.
+        let mut a = [0.01f32; 12];
+        a[9] = 0.6;
+        a[4] = 0.3;
+        let kick = describe_as(&db, "DT2_Kick_Dusty_03", a);
+        describe_as(&db, "DT2_Snare_Crack_11", [1.0 / 12.0; 12]);
+        // An E minor arp with a little C♯ in it: it fits A minor, a little less well.
+        let mut e = [0.01f32; 12];
+        e[4] = 0.7;
+        e[11] = 0.1;
+        e[1] = 0.1;
+        describe_as(&db, "Nightdrive_Arp_Loop_128_Em", e);
+
+        let am = KeyFilter { pc: 9, mode: 1, compatible: false, include_unpitched: false, root_in_scale: true, scale: None, by_notes: false };
+        assert_eq!(names(&db, Filters { key: Some(am.clone()), ..Default::default() }), vec!["Nightdrive_Bass_Loop_124_Am"]);
+        let by_notes = KeyFilter { by_notes: true, ..am.clone() };
+        assert_eq!(names(&db, Filters { key: Some(by_notes.clone()), ..Default::default() }), vec!["DT2_Kick_Dusty_03", "Nightdrive_Bass_Loop_124_Am"]);
+        // D♭ major has neither A nor E, so the kick doesn't fit it.
+        let d_flat = KeyFilter { pc: 1, mode: 0, ..by_notes.clone() };
+        assert!(!names(&db, Filters { key: Some(d_flat), ..Default::default() }).contains(&"DT2_Kick_Dusty_03".to_string()));
+        assert_eq!(db.facets(&Filters { key: Some(by_notes), ..Default::default() }).unwrap().total, 2);
+
+        // Sorting by fit puts the best-fitting profiles first and undescribed samples last.
+        let everything = KeyFilter { include_unpitched: true, compatible: true, ..am };
+        let fit = db.query(&QueryRequest { filters: Filters { key: Some(everything), ..Default::default() }, sort: "fit".into(), desc: false, offset: 0, limit: 10, seed: 0 }).unwrap();
+        let order: Vec<&str> = fit.rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(order[..3], ["DT2_Kick_Dusty_03", "Nightdrive_Arp_Loop_128_Em", "DT2_Snare_Crack_11"], "{order:?}");
+        // Without a key there's nothing to fit, so the usual order applies.
+        assert!(db.query(&QueryRequest { filters: Filters::default(), sort: "fit".into(), desc: false, offset: 0, limit: 10, seed: 0 }).is_ok());
+
+        let p = db.pitch_profile(kick).unwrap().unwrap();
+        assert_eq!(p.chroma, a);
+        assert_eq!((p.hz, p.clarity, p.tonality), (None, 0.0, 0.0));
+        assert!(db.pitch_profile(99_999).unwrap().is_none());
     }
 
     #[test]

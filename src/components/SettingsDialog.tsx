@@ -84,12 +84,13 @@ const SHORTCUTS: [string, string][] = [
   [`${modKey} 0`, "Interface at 100%"],
   ["E", "Open the editor"],
   ["R", "Reverse"],
-  ["[ ]", "Semitone down / up"],
+  ["[ ]", "Semitone down / up (through the key's scale with scale lock)"],
   ["S", "Sync to project tempo"],
   ["K", "Match project key"],
   ["T", "Tap tempo"],
   ["M", "Sound map or list"],
   ["G", "Find similar sounds"],
+  ["H", "The Lab"],
 ];
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {

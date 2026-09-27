@@ -34,9 +34,17 @@
   --accent-soft: rgba(157, 140, 255, 0.14);
   --overlay: rgba(6, 7, 8, 0.6);
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  /* Black keys on the Lab keyboard; darker than any surface in either theme. */
+  --key-black: #0b0c0e;
+  --key-black-text: #868a91;
   --sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --key-black: #2a2b2e;
+  --key-black-text: #c9c7c1;
 }
 
 @theme inline {

@@ -17,6 +17,7 @@ const SORTS: { key: SortKey; label: string; directional: boolean }[] = [
   { key: "duration", label: "Length", directional: true },
   { key: "bpm", label: "Tempo", directional: true },
   { key: "key", label: "Key (Camelot)", directional: true },
+  { key: "fit", label: "Fit to the key", directional: false },
   { key: "random", label: "Shuffled", directional: false },
 ];
 
@@ -86,8 +87,10 @@ export function FilterBar() {
 
   const sortMenu = (el: HTMLElement) => {
     const items: MenuItem[] = SORTS.map((s) => ({
-      label: s.label,
+      // Ranks by how much of each sample's pitched sound falls on the key filter's notes.
+      label: s.key === "fit" && !f.key ? `${s.label} (filter by a key first)` : s.label,
       checked: s.key === sort,
+      disabled: s.key === "fit" && !f.key,
       onSelect: () => (s.key === "random" ? shuffle() : setSort(s.key, s.key === sort ? desc : false)),
     }));
     if (current.directional) {

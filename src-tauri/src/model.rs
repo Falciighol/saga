@@ -104,6 +104,29 @@ pub struct KeyFilter {
     pub include_unpitched: bool,
     #[serde(default = "yes")]
     pub root_in_scale: bool,
+    /// A scale from the Lab, as semitones above `pc` (Dorian is `[0, 2, 3, 5, 7, 9, 10]`).
+    /// "Compatible" then means keys that share the scale's notes, and one-shot roots are
+    /// checked against the scale instead of the plain major or minor one.
+    #[serde(default)]
+    pub scale: Option<Vec<u8>>,
+    /// Samples with no key pass when the notes in their stored pitch profile fit the scale
+    /// (see `keys::scale_fit`). Moot while `include_unpitched` lets every one of them through.
+    #[serde(default)]
+    pub by_notes: bool,
+}
+
+/// What a sample's stored description says about its notes, for the Lab's key finder and tuning.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PitchProfile {
+    /// Share of the pitched energy on each note, C first; all zero when nothing tonal was found.
+    pub chroma: [f32; 12],
+    /// 0 for an even spread over the twelve notes, 1 for a single note.
+    pub tonality: f32,
+    /// The fundamental of a clearly pitched sound, in Hz.
+    pub hz: Option<f32>,
+    /// 0–1: how clearly periodic the sound is.
+    pub clarity: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]

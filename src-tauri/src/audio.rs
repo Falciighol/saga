@@ -4,6 +4,8 @@
 
 use crate::decode::decode;
 use crate::dsp::{hermite, make_stretcher, resample_rates, shape, ProcessParams, Shaped};
+use crate::sequence::{due, follow, start_grid, Grid, LoopBeats, Sequence, TransportEvent};
+use crate::synth::{Batch, NoteEvent, Preset, Scheduled, Synth};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{bounded, select, unbounded, Receiver, Sender};
 use parking_lot::Mutex;
@@ -11,6 +13,7 @@ use serde::Serialize;
 use signalsmith_stretch::Stretch;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -22,6 +25,10 @@ const CACHE_BYTES: usize = 384 * 1024 * 1024;
 const RELEASE_OUTPUT_AFTER: Duration = Duration::from_secs(90);
 /// Largest block handed to the stretcher at once.
 const MAX_BLOCK: usize = 4096;
+/// How far ahead progression notes are scheduled, and how often the engine thread tops them up.
+/// The margin covers the coarse timers on Windows; edits and tempo changes reschedule at once.
+const LOOKAHEAD: f64 = 0.15;
+const SEQUENCE_TICK: Duration = Duration::from_millis(20);
 
 /// Decoded audio: stereo, interleaved, at the output device's rate.
 pub struct PcmBuffer {
@@ -67,6 +74,8 @@ struct Voice {
     target: f32,
     releasing: bool,
     last_beat: i64,
+    /// New for every voice, so the progression player can tell a loop started over.
+    serial: u64,
 }
 
 struct Scratch {
@@ -104,7 +113,14 @@ impl Voice {
             1 => Render::Repitch,
             _ => Render::Direct,
         };
-        Voice { id, src, params, render, pos: start, looping, level: 0.0, target: 1.0, releasing: false, last_beat: i64::MIN }
+        static SERIAL: AtomicU64 = AtomicU64::new(1);
+        let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+        Voice { id, src, params, render, pos: start, looping, level: 0.0, target: 1.0, releasing: false, last_beat: i64::MIN, serial }
+    }
+
+    /// Seconds of the original per beat, when it's a loop with a tempo.
+    fn beat(&self) -> Option<f64> {
+        self.params.beat.filter(|b| *b > 0.01)
     }
 
     fn silent(&self) -> bool {
@@ -211,7 +227,7 @@ impl Voice {
         self.level = level;
 
         if collect_clicks {
-            if let Some(beat) = self.params.beat.filter(|b| *b > 0.01) {
+            if let Some(beat) = self.beat() {
                 let beat_frames = beat * self.src.rate as f64;
                 for i in 0..n {
                     let mut vp = start + i as f64 * rate;
@@ -245,6 +261,13 @@ struct Mixer {
     click_env: f32,
     click_phase: f32,
     click_freq: f32,
+    /// Lab notes and chords.
+    synth: Synth,
+    /// Frames rendered since the stream opened; progression notes are scheduled against it.
+    clock: u64,
+    /// Beats of the progression while one is playing.
+    transport: Option<Grid>,
+    last_transport_click: i64,
     scratch: Scratch,
 }
 
@@ -266,6 +289,10 @@ impl Mixer {
             click_env: 0.0,
             click_phase: 0.0,
             click_freq: 1000.0,
+            synth: Synth::default(),
+            clock: 0,
+            transport: None,
+            last_transport_click: i64::MIN,
             scratch: Scratch { input: vec![0.0; MAX_BLOCK * 2 * 5], output: vec![0.0; MAX_BLOCK * 2], clicks: Vec::with_capacity(64) },
         }
     }
@@ -278,6 +305,43 @@ impl Mixer {
         for v in &mut self.voices {
             v.releasing = true;
             v.target = 0.0;
+        }
+    }
+
+    /// The beats of the loop that's playing, if it has a tempo.
+    fn loop_beats(&self) -> Option<LoopBeats> {
+        let v = self.voices.iter().find(|v| !v.releasing && v.target > 0.0)?;
+        let beat_src = v.beat()? * v.src.rate as f64;
+        let speed = v.speed();
+        Some(LoopBeats {
+            serial: v.serial,
+            beat: v.pos / beat_src,
+            beat_frames: beat_src / speed,
+            to_wrap: if v.looping { (v.src.frames as f64 - v.pos).max(0.0) / speed } else { f64::INFINITY },
+        })
+    }
+
+    fn add_notes(&mut self, batch: Batch) {
+        self.synth.add(batch, self.clock);
+    }
+
+    /// Metronome clicks from the progression's beats, when no playing loop is giving them.
+    fn transport_clicks(&mut self, n: usize) {
+        let Some(g) = self.transport else { return };
+        let ticking = self.voices.iter().any(|v| !v.releasing && !v.silent() && v.beat().is_some());
+        if !self.click_on || ticking {
+            return;
+        }
+        let clock = self.clock as f64;
+        let mut b = g.beat_at(clock).ceil().max(0.0);
+        while g.frame_at(b) < clock + n as f64 {
+            let beat = b as i64;
+            if beat != self.last_transport_click && self.scratch.clicks.len() < self.scratch.clicks.capacity() {
+                self.last_transport_click = beat;
+                let at = ((g.frame_at(b) - clock).floor() as usize).min(n - 1);
+                self.scratch.clicks.push((at, beat.rem_euclid(4) == 0));
+            }
+            b += 1.0;
         }
     }
 
@@ -307,6 +371,8 @@ impl Mixer {
             }
         }
 
+        self.transport_clicks(n);
+
         // Metronome: a short sine blip, higher on the downbeat.
         let decay = (-1.0 / (0.025 * self.rate as f32)).exp();
         let mut next_click = 0;
@@ -326,11 +392,14 @@ impl Mixer {
             }
         }
 
+        self.synth.render(out, n, self.rate);
+
         for f in 0..n {
             self.gain += (self.target_gain - self.gain) * 0.001;
             out[f * 2] = (out[f * 2] * self.gain).clamp(-1.0, 1.0);
             out[f * 2 + 1] = (out[f * 2 + 1] * self.gain).clamp(-1.0, 1.0);
         }
+        self.clock += n as u64;
     }
 }
 
@@ -344,6 +413,13 @@ pub enum Cmd {
     SetLoop(bool),
     SetParams(ProcessParams),
     SetClick(bool),
+    /// Lab notes, mixed over whatever sample is playing.
+    PlayNotes { notes: Vec<NoteEvent>, preset: Preset },
+    /// Lets Lab notes ring out quickly and cancels any that haven't started.
+    StopNotes,
+    /// Starts the Lab's progression looping, or updates the one that's playing in place.
+    PlaySequence(Sequence),
+    StopSequence,
     SetVolume(f32),
     SetDevice(Option<String>),
 }
@@ -375,17 +451,18 @@ impl PlaybackEvent {
 }
 
 pub type EmitPlayback = Arc<dyn Fn(PlaybackEvent) + Send + Sync>;
+pub type EmitTransport = Arc<dyn Fn(TransportEvent) + Send + Sync>;
 
 pub struct Engine {
     tx: Sender<Cmd>,
 }
 
 impl Engine {
-    pub fn start(device: Option<String>, volume: f32, emit: EmitPlayback) -> Engine {
+    pub fn start(device: Option<String>, volume: f32, emit: EmitPlayback, emit_transport: EmitTransport) -> Engine {
         let (tx, rx) = unbounded::<Cmd>();
         std::thread::Builder::new()
             .name("saga-audio".into())
-            .spawn(move || EngineThread::new(device, volume, emit).run(rx))
+            .spawn(move || EngineThread::new(device, volume, emit, emit_transport).run(rx))
             .expect("spawn audio thread");
         Engine { tx }
     }
@@ -419,6 +496,17 @@ struct Current {
     looping: bool,
 }
 
+/// The Lab's progression while it plays.
+struct Progression {
+    seq: Sequence,
+    /// Beats scheduled so far.
+    until: f64,
+    /// Serial of the loop whose beats it follows, 0 for none.
+    following: u64,
+    /// Last whole beat reported to the frontend.
+    reported: i64,
+}
+
 struct EngineThread {
     device: Option<String>,
     output: Option<Output>,
@@ -426,11 +514,13 @@ struct EngineThread {
     events_tx: Sender<MixEvent>,
     events_rx: Receiver<MixEvent>,
     emit: EmitPlayback,
+    emit_transport: EmitTransport,
     cache: VecDeque<Cached>,
     volume: f32,
     click: bool,
     last_sound: Instant,
     current: Option<Current>,
+    progression: Option<Progression>,
 }
 
 fn build_stream<T>(device: &cpal::Device, config: &cpal::StreamConfig, mixer: Arc<Mutex<Mixer>>, events: Sender<MixEvent>) -> Result<cpal::Stream, String>
@@ -500,7 +590,7 @@ pub fn load_stereo(path: &Path, out_rate: Option<u32>) -> Result<(Vec<f32>, u32,
 }
 
 impl EngineThread {
-    fn new(device: Option<String>, volume: f32, emit: EmitPlayback) -> EngineThread {
+    fn new(device: Option<String>, volume: f32, emit: EmitPlayback, emit_transport: EmitTransport) -> EngineThread {
         let (events_tx, events_rx) = bounded(64);
         EngineThread {
             device,
@@ -509,11 +599,13 @@ impl EngineThread {
             events_tx,
             events_rx,
             emit,
+            emit_transport,
             cache: VecDeque::new(),
             volume,
             click: false,
             last_sound: Instant::now(),
             current: None,
+            progression: None,
         }
     }
 
@@ -675,6 +767,95 @@ impl EngineThread {
         self.emit_state_if_active();
     }
 
+    fn play_sequence(&mut self, seq: Sequence) {
+        if self.output.is_none() {
+            self.open_output();
+        }
+        let Some(rate) = self.output_rate() else { return };
+        let tempo_frames = 60.0 * rate as f64 / seq.bpm.clamp(20.0, 400.0);
+        let mut m = self.mixer.lock();
+        let now = m.clock as f64;
+        match (self.progression.as_mut(), m.transport) {
+            (Some(p), Some(grid)) => {
+                // Same place in the pattern; notes not yet started are scheduled again from it.
+                p.seq = seq;
+                m.synth.drop_pending_seq();
+                p.until = grid.beat_at(now);
+            }
+            _ => {
+                let lp = m.loop_beats();
+                m.transport = Some(start_grid(now, 0.02 * rate as f64, tempo_frames, lp));
+                m.last_transport_click = i64::MIN;
+                self.progression = Some(Progression { seq, until: 0.0, following: lp.map_or(0, |l| l.serial), reported: i64::MIN });
+            }
+        }
+        drop(m);
+        self.tick_sequence();
+    }
+
+    fn stop_sequence(&mut self) {
+        if self.progression.take().is_none() {
+            return;
+        }
+        {
+            let mut m = self.mixer.lock();
+            m.transport = None;
+            m.synth.release_seq();
+        }
+        (self.emit_transport)(TransportEvent { playing: false, beat: 0.0, bpm: 0.0 });
+    }
+
+    /// Keeps the progression's grid on the loop or tempo it should follow, and schedules the
+    /// notes due in the next moment.
+    fn tick_sequence(&mut self) {
+        if self.progression.is_none() {
+            return;
+        }
+        let Some(rate) = self.output_rate() else {
+            self.stop_sequence();
+            return;
+        };
+        let Some(p) = self.progression.as_mut() else { return };
+        let tempo_frames = 60.0 * rate as f64 / p.seq.bpm.clamp(20.0, 400.0);
+        let (grid, now) = {
+            let mut m = self.mixer.lock();
+            let now = m.clock as f64;
+            let Some(mut grid) = m.transport else { return };
+            let lp = m.loop_beats();
+            // 2 ms: well under what you'd hear, well over rounding.
+            if let Some(g) = follow(grid, now, tempo_frames, lp, p.following, 0.002 * rate as f64) {
+                grid = g;
+                m.transport = Some(g);
+                m.synth.drop_pending_seq();
+                p.until = g.beat_at(now);
+                // The playhead needs the new tempo now, not at the next beat.
+                p.reported = i64::MIN;
+            }
+            p.following = lp.map_or(0, |l| l.serial);
+            (grid, now)
+        };
+        let horizon = grid.beat_at(now + LOOKAHEAD * rate as f64);
+        let notes: Vec<Scheduled> = due(&p.seq, p.until, horizon)
+            .into_iter()
+            .map(|(beat, n)| Scheduled {
+                note: n.note,
+                frame: grid.frame_at(beat).round().max(0.0) as u64,
+                hold: (n.length * grid.beat_frames) as usize,
+                velocity: n.velocity,
+            })
+            .collect();
+        p.until = p.until.max(horizon);
+        if !notes.is_empty() {
+            let batch = Batch::scheduled(&notes, p.seq.preset, rate);
+            self.mixer.lock().add_notes(batch);
+        }
+        let beat = grid.beat_at(now);
+        if beat.floor() as i64 != p.reported {
+            p.reported = beat.floor() as i64;
+            (self.emit_transport)(TransportEvent { playing: true, beat, bpm: grid.bpm(rate) });
+        }
+    }
+
     fn handle(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Play { id, path, start, looping, params } => self.play(id, path, start, looping, params),
@@ -713,6 +894,20 @@ impl EngineThread {
                 self.click = on;
                 self.mixer.lock().click_on = on;
             }
+            Cmd::PlayNotes { notes, preset } => {
+                if notes.is_empty() {
+                    return;
+                }
+                if self.output.is_none() {
+                    self.open_output();
+                }
+                let Some(rate) = self.output_rate() else { return };
+                let batch = Batch::new(&notes, preset, rate);
+                self.mixer.lock().add_notes(batch);
+            }
+            Cmd::StopNotes => self.mixer.lock().synth.release_all(),
+            Cmd::PlaySequence(seq) => self.play_sequence(seq),
+            Cmd::StopSequence => self.stop_sequence(),
             Cmd::SetVolume(v) => {
                 self.volume = v.clamp(0.0, 1.5);
                 self.mixer.lock().target_gain = self.volume;
@@ -720,7 +915,11 @@ impl EngineThread {
             Cmd::SetDevice(name) => {
                 // The new device opens on the next play.
                 self.device = name;
-                self.mixer.lock().voices.clear();
+                self.stop_sequence();
+                let mut m = self.mixer.lock();
+                m.voices.clear();
+                m.synth.clear();
+                drop(m);
                 self.output = None;
                 self.emit_state("stopped");
             }
@@ -730,6 +929,7 @@ impl EngineThread {
     fn run(mut self, rx: Receiver<Cmd>) {
         let events_rx = self.events_rx.clone();
         loop {
+            let idle = if self.progression.is_some() { SEQUENCE_TICK } else { Duration::from_secs(5) };
             select! {
                 recv(rx) -> cmd => {
                     let Ok(cmd) = cmd else { break };
@@ -755,17 +955,26 @@ impl EngineThread {
                         Ok(MixEvent::StreamError(e)) => {
                             // Usually the device went away; the next play reopens whatever is available.
                             eprintln!("saga: audio stream error: {e}");
-                            self.mixer.lock().voices.clear();
+                            self.stop_sequence();
+                            let mut m = self.mixer.lock();
+                            m.voices.clear();
+                            m.synth.clear();
+                            drop(m);
                             self.output = None;
                             self.emit_state("stopped");
                         }
                         Err(_) => break,
                     }
                 }
-                default(Duration::from_secs(5)) => {}
+                default(idle) => {}
             }
+            self.tick_sequence();
             if self.output.is_some() {
-                if !self.mixer.lock().voices.is_empty() {
+                let sounding = self.progression.is_some() || {
+                    let m = self.mixer.lock();
+                    !m.voices.is_empty() || m.synth.active()
+                };
+                if sounding {
                     self.last_sound = Instant::now();
                 } else if self.last_sound.elapsed() > RELEASE_OUTPUT_AFTER {
                     self.output = None;
@@ -875,5 +1084,65 @@ mod tests {
         assert_eq!(clicks, 9);
         assert_eq!(downbeats, 3);
         assert!(loud > 0.2, "audible");
+    }
+
+    #[test]
+    fn progression_notes_land_with_the_click() {
+        use crate::sequence::{due, SeqNote};
+        let mut m = Mixer::new(48_000, 1.0);
+        m.click_on = true;
+        // Half-second beats, so each click has died away before the next beat.
+        let grid = Grid { origin: 0.0, beat_frames: 24_000.0 };
+        m.transport = Some(grid);
+        let seq = Sequence { notes: vec![SeqNote { note: 60.0, start: 1.0, length: 0.5, velocity: 1.0 }], beats: 4.0, bpm: 120.0, preset: Preset::Keys };
+        let notes: Vec<Scheduled> = due(&seq, 0.0, 2.0)
+            .into_iter()
+            .map(|(b, n)| Scheduled { note: n.note, frame: grid.frame_at(b) as u64, hold: 12_000, velocity: n.velocity })
+            .collect();
+        m.add_notes(Batch::scheduled(&notes, seq.preset, 48_000));
+
+        let (tx, _rx) = bounded(64);
+        let mut out = vec![0f32; 512 * 2];
+        let mut clicks = Vec::new();
+        let mut heard = Vec::new();
+        for _ in 0..(40_000 / 512) {
+            let start = m.clock;
+            m.render(&mut out, 512, &tx);
+            clicks.extend(m.scratch.clicks.iter().map(|c| (start + c.0 as u64, c.1)));
+            heard.extend(out.chunks(2).map(|f| f[0]));
+        }
+        assert_eq!(clicks, vec![(0, true), (24_000, false)]);
+        // Both the click and the note start from zero on beat 1, so the first sound is the frame after.
+        let first = heard[12_000..].iter().position(|v| *v != 0.0).unwrap() + 12_000;
+        assert_eq!(first, 24_001);
+        // More energy than the click alone on beat 0, so the note is there too.
+        let energy = |x: &[f32]| x.iter().map(|v| v * v).sum::<f32>();
+        let (with_note, click_only) = (energy(&heard[24_000..24_480]), energy(&heard[..480]));
+        assert!(with_note > click_only * 1.2, "{with_note} vs {click_only}");
+    }
+
+    #[test]
+    fn a_playing_loop_gives_the_beats_and_the_click() {
+        let mut m = Mixer::new(48_000, 1.0);
+        m.click_on = true;
+        m.transport = Some(Grid { origin: 0.0, beat_frames: 24_000.0 });
+        // Two seconds, stereo.
+        let silent = Arc::new(shape(&vec![0.0; 192_000], 48_000, &ProcessParams::default()));
+        // Beats of 0.1 s of the original, played at double speed.
+        let p = ProcessParams { beat: Some(0.1), rate: 2.0, mode: Mode::Repitch, ..Default::default() };
+        m.voices.push(Voice::new(3, silent, p, 0.0, true));
+        let (tx, _rx) = bounded(64);
+        let mut out = vec![0f32; 480 * 2];
+        let mut clicks = 0;
+        for _ in 0..50 {
+            m.render(&mut out, 480, &tx);
+            clicks += m.scratch.clicks.len();
+        }
+        // 24,000 frames: 48,000 of the loop at 4,800 per beat, and no clicks from the progression.
+        assert_eq!(clicks, 10);
+        let lp = m.loop_beats().unwrap();
+        assert!((lp.beat - 10.0).abs() < 1e-9, "{}", lp.beat);
+        assert_eq!(lp.beat_frames, 2_400.0);
+        assert_eq!(lp.to_wrap, 24_000.0);
     }
 }

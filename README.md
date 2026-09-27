@@ -107,6 +107,59 @@ only shown when the fit is strong (about half of untagged melodic loops), and th
 key or its relative about 70% of the time and harmonically compatible about 80%. For one-shots,
 about half of a sample's 10 closest matches share its category, against 11% by chance.
 
+## The Lab
+
+A third view next to the list and the map (`H`, or the scale button on the view toggle) for
+working out the harmony of a track.
+
+- **Scales**: 37 of them, from the seven modes through harmonic and melodic minor, pentatonic and
+  blues, symmetric scales and world scales like Hirajoshi and Double harmonic. Each one shows on a
+  12-note circle (root at the top, so every scale keeps its shape in any key) and on a keyboard,
+  with its degrees, the notes that set it apart from plain major or minor, and the chords it
+  contains, coloured tonic, subdominant or dominant. Modes also get a brightest-to-darkest ladder.
+- **Hear it**: click keys, chords or the scale; they play through the output device chosen in
+  Settings, over any sample that's playing. Pick the sound in the rail: Keys, Pad or Pluck.
+- **Back to the library**: *Set as project key* makes it the project key (the title bar shows
+  "A Dorian"; Match key and Camelot codes use the closest major or minor). *Show samples that fit*
+  opens the list filtered to samples in keys that share the scale's notes, one-shots whose root
+  is in it, and samples with no key at all whose notes fit it, best fit first. The side panel
+  lists the best fits, the Camelot moves from here with how many samples you have in each key,
+  and related scales one note away.
+- **Progressions**: sketch 2, 4 or 8 bars, one chord a bar. Fill a bar from the scale's chords,
+  borrowed chords (from the parallel major or minor, the Neapolitan, secondary dominants) or the
+  suggestions for what comes next (home leads away, away leads to tension, tension resolves), or
+  start from a preset such as Night drive, Andalusian cadence or Jazz turnaround. Shift-click a
+  chord in Scales to drop it into the selected bar. Chords are kept relative to the key, so
+  changing the key transposes them. Play it held, pulsed on every beat or arpeggiated.
+- **In time**: a progression loops through the same mixer as the preview, at the project tempo
+  and with the metronome if it's on. Play a loop with a tempo and the progression follows the
+  loop's beats instead: it starts on the loop's next bar line and stays locked to it, so you can
+  hear chords against the loop.
+- **Out to the DAW**: drag the MIDI tile into your DAW for a clip of exactly what plays, bass
+  included, at the project tempo. Clips go to Music › Saga › Renders; dragging the same clip twice
+  reuses its file.
+- **Saved ideas**: save a progression and it sits in the rail; edits to it save as you go.
+  Right-click an idea to rename, duplicate or delete it.
+- **Key finder**: the keys and scales that fit the selected sample, from the pitch profile Saga
+  stored when it analysed the file (no re-analysis), or from notes you pick on a keyboard, with
+  the note that feels like home if you know it. *Likely keys* ranks the 24 major and minor keys
+  the way detection does; *Scales that fit* ranks the modes, pentatonics and colour scales.
+  Play the sample and try the chosen scale's keys over it, then set it as the project key, open
+  it in Scales or show the samples that fit. Right-click a sample › *Find its key* opens it here.
+- **Tempo & tuning**: delay and LFO times for straight, dotted and triplet notes at the project
+  tempo (click one to copy it), bar lengths, and the project key's notes in Hz, at A = 440 or
+  432, from the sub octave up. *Tune a one-shot* measures the selected kick or 808 (it rings at
+  49.1 Hz, G1 −26¢) and sets its pitch to the nearest note of the key, cents included.
+  Right-click a one-shot › *Tune it to the key* opens it here.
+- **Scale lock** (in the project key menu): `[ ]` and the pitch buttons step a sample through the
+  project key's scale instead of by semitones. A one-shot's root walks the scale's notes; a loop
+  moves to the next key that fits the scale (an A minor loop in A Dorian goes to B minor, then
+  E minor).
+- **Notes that fit**: the key filter can also keep samples with no key whose notes fit the scale
+  (drums and noise don't), and the list can sort by how well each sample's notes fit the key.
+  On loops from real packs whose names state a key, 65% fit their own key well enough to pass,
+  against 3% for the key a tritone away and 2% of drums and effects.
+
 ## Search syntax
 
 | Type            | Means                                        |
@@ -128,8 +181,13 @@ about half of a sample's 10 closest matches share its category, against 11% by c
 `F` favorite · `L` loop · `⌘K` search · `⌘⇧F` filters · `Esc` clear search / stop / close editor ·
 `⌘,` settings
 
-Phase 2: `E` editor · `R` reverse · `[ ]` semitone down/up · `S` sync to project tempo ·
-`K` match project key · `T` tap tempo
+Phase 2: `E` editor · `R` reverse · `[ ]` semitone down/up (a step through the key's scale with
+scale lock) · `S` sync to project tempo · `K` match project key · `T` tap tempo
+
+Lab: `H` open or close · `Esc` stop. In Scales, `↑ ↓` scale · `← →` root · `Space` play the
+scale. In Progressions, `Space` play or stop · `← →` pick a bar · `↑ ↓` step its chord through the
+scale · `⌫` clear it. In the key finder and Tempo & tuning, `↑ ↓` walk the list and `Space` plays
+the selected sample
 
 Phase 3: `M` sound map or list · `G` find similar · on the map, `↑ ↓` walk the Similar sounds
 list · `Esc` clears a lasso selection or cancels a recording
@@ -145,23 +203,30 @@ src-tauri/src
   sounds.rs    in-memory similarity index (standardized features, per-aspect distances)
   map.rs       sound map layout: t-SNE of landmark samples, everything else placed among them
   record.rs    microphone capture for Find by recording
+  synth.rs     Lab note voices (keys, pad, pluck) mixed into the preview
+  sequence.rs  Lab progression player: beat grid on the mixer clock, loop following, scheduling
+  midi.rs      progressions as Standard MIDI Files for dragging into a DAW
   decode.rs    Symphonia streaming decode (WAV, AIFF, FLAC, MP3, OGG, M4A, CAF)
   chunks.rs    ACID / smpl / Apple Loops / CAF metadata
   meta.rs      name parsing and the rules that combine name, metadata and duration
-  keys.rs      keys, Camelot codes, compatibility
-  db.rs        SQLite + FTS5 index, favorites, tags, collections
+  keys.rs      keys, Camelot codes, compatibility, keys that fit a scale, how well notes fit one
+  db.rs        SQLite + FTS5 index, favorites, tags, collections, scale_fit() over stored profiles
   query.rs     filters and search syntax → SQL
-  audio.rs     preview engine (CPAL mixer, live stretch/repitch voices, metronome)
+  audio.rs     preview engine (CPAL mixer, live stretch/repitch voices, metronome, progressions)
   dsp.rs       shared processing: region, reverse, fades, gain, stretch, repitch, WAV writing
   render.rs    offline renders, file naming, zoomable waveform detail for the editor
   commands.rs  Tauri commands
 src
   store/       Zustand stores: browse (queries, paging, selection), library, player, prefs,
-               project (tempo/key), edits (per-sample), editor, ui (list/map, mini player),
-               similar, soundmap
+               project (tempo/key/scale), edits (per-sample), editor, ui (list/map/lab, mini
+               player), similar, soundmap, lab
+  components/lab/  the Lab: scale list, pitch circle, keyboard, chords, progressions, key finder,
+               tempo & tuning, side panels
   components/  UI
   lib/         API bindings, processing (tempo/key math, one source of truth for preview and
-               render), renders, theme palette, fonts, waveform drawing, formatting
+               render), theory (scales, spelling, chords, key finding, scale fit, scale steps),
+               progressions (presets, voicing, rhythms, suggestions), renders, theme palette,
+               fonts, waveform drawing, formatting
 ```
 
 ## Tests
@@ -170,10 +235,13 @@ src
 cd src-tauri && cargo test
 ```
 
-Covers key and name parsing, embedded metadata, analysis, resampling and mixing, search and
-filters, indexing a real folder end to end, stretch and repitch accuracy, regions, crossfades and
-reverse, the metronome, renders, tempo, key and pitch detection, similarity, the map layout, and
-every frontend command through Tauri's IPC layer.
+Covers key and name parsing, keys that fit a scale, how well a pitch profile fits one, embedded
+metadata, analysis, resampling and mixing, search and filters (scales and notes that fit
+included, and the fit sort), indexing a real folder end to end, stretch and
+repitch accuracy, regions, crossfades and reverse, the metronome, the Lab synth's tuning and
+envelopes, progressions landing with the click and following a loop's beats, MIDI clips, renders,
+tempo, key and pitch detection, similarity, the map layout, and every frontend command through
+Tauri's IPC layer.
 
 To check the name parser against your own library (names only, nothing is decoded):
 
@@ -181,8 +249,9 @@ To check the name parser against your own library (names only, nothing is decode
 cd src-tauri && SAGA_SCAN_DIR="/path/to/samples" cargo test --lib meta::report -- --ignored --nocapture
 ```
 
-Detection accuracy and similarity quality against your own tagged samples (decodes a few hundred
-files, read-only):
+Detection accuracy, how well stored pitch profiles fit the keys in sample names (where the notes
+that fit threshold comes from; set `SAGA_DUMP=profiles.json` to keep the profiles) and similarity
+quality against your own tagged samples (decodes a few hundred files, read-only):
 
 ```bash
 cd src-tauri && SAGA_SCAN_DIR="/path/to/samples" cargo test --release --lib detect::report -- --ignored --nocapture

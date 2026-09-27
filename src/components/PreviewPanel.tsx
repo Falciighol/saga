@@ -5,7 +5,8 @@ import { collectionSubmenu, dragOut, dragSample, findSimilar, reveal } from "../
 import { api, errorMessage } from "../lib/api";
 import { barsCount, ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate, sourceHint } from "../lib/format";
 import { revealLabel } from "../lib/platform";
-import { DEFAULT_EDIT, type Processing } from "../lib/processing";
+import { projectKeyLabel } from "../lib/keys";
+import { DEFAULT_EDIT, keyLabel, type Processing } from "../lib/processing";
 import { useRender, type RenderState } from "../lib/renders";
 import { usePixelRatio } from "../lib/scale";
 import type { SampleRow } from "../lib/types";
@@ -14,7 +15,7 @@ import { useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
 import { playerPosition, shouldLoop, timelinePosition, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
-import { useEdit, useEdits, useProject } from "../store/project";
+import { pitchStep, stepPitch, useEdit, useEdits, useProject } from "../store/project";
 import { toast } from "../store/toasts";
 import { openMenuBelow, type MenuItem } from "./Menu";
 import { cx, Divider, IconButton, SectionLabel, Switch } from "./ui";
@@ -299,7 +300,7 @@ function TagEditor({ row }: { row: SampleRow }) {
   );
 }
 
-function GripIcon({ className }: { className?: string }) {
+export function GripIcon({ className }: { className?: string }) {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" className={className}>
       <circle cx="9" cy="6" r="1.6" />
@@ -388,15 +389,23 @@ function TempoReadout({ row, processing }: { row: SampleRow; processing: Process
 }
 
 export function PitchStepper({ row, processing, compact }: { row: SampleRow; processing: Processing; compact?: boolean }) {
-  const edit = useEdit(row.id);
   const update = useEdits((s) => s.update);
+  const project = useProject();
   const locked = processing.mode === "repitch" && processing.synced;
   const value = processing.semitones;
   const label = `${value > 0.004 ? "+" : value < -0.004 ? "−" : "±"}${Math.abs(value).toFixed(Math.abs(value % 1) > 0.004 ? 1 : 0)} st`;
-  const step = (d: number) => update(row.id, { semitones: Math.max(-24, Math.min(24, edit.semitones + d)) });
+  // With scale lock, the buttons say where they go: "Up to E (+2 st) in A Dorian".
+  const scaled = project.scaleLock && project.key != null && row.keyPc != null;
+  const scaleName = project.key ? projectKeyLabel(project.key) : "";
+  const hint = (dir: 1 | -1) => {
+    const d = pitchStep(row, dir, project);
+    if (!scaled) return dir > 0 ? "Up one semitone" : "Down one semitone";
+    const to = keyLabel(row.keyPc! + Math.round(value) + d, row.keyMode!);
+    return `${dir > 0 ? "Up" : "Down"} to ${to} (${d > 0 ? "+" : "−"}${Math.abs(d)} st), in ${scaleName}`;
+  };
   return (
-    <div className="flex items-center gap-1.5" title={locked ? "In repitch mode the tempo sets the pitch" : undefined}>
-      <button type="button" disabled={locked} onClick={() => step(-1)} aria-label="Down one semitone" className="grid h-6 w-6 place-items-center rounded-md border border-line2 text-text2 hover:bg-raised disabled:opacity-40">
+    <div className="flex items-center gap-1.5" title={locked ? "In repitch mode the tempo sets the pitch" : scaled ? `Scale lock: steps through ${scaleName}` : undefined}>
+      <button type="button" disabled={locked} onClick={() => stepPitch(row, -1)} aria-label={hint(-1)} title={hint(-1)} className="grid h-6 w-6 place-items-center rounded-md border border-line2 text-text2 hover:bg-raised disabled:opacity-40">
         <Minus size={12} strokeWidth={2.25} />
       </button>
       <button
@@ -407,7 +416,7 @@ export function PitchStepper({ row, processing, compact }: { row: SampleRow; pro
       >
         {label}
       </button>
-      <button type="button" disabled={locked} onClick={() => step(1)} aria-label="Up one semitone" className="grid h-6 w-6 place-items-center rounded-md border border-line2 text-text2 hover:bg-raised disabled:opacity-40">
+      <button type="button" disabled={locked} onClick={() => stepPitch(row, 1)} aria-label={hint(1)} title={hint(1)} className="grid h-6 w-6 place-items-center rounded-md border border-line2 text-text2 hover:bg-raised disabled:opacity-40">
         <Plus size={12} strokeWidth={2.25} />
       </button>
     </div>

@@ -1,4 +1,5 @@
 import { camelot, compatibleKeys, keyName, wheelKeys } from "../lib/keys";
+import { fittingKeys } from "../lib/theory";
 import type { KeyFilter } from "../lib/types";
 
 const SIZE = 240;
@@ -12,7 +13,7 @@ function sector(r1: number, r2: number, a0: number, a1: number): string {
   return `M${p(r1, a0)}A${r1} ${r1} 0 0 1 ${p(r1, a1)}L${p(r2, a1)}A${r2} ${r2} 0 0 0 ${p(r2, a0)}Z`;
 }
 
-/** Camelot wheel: outer ring majors (B), inner ring minors (A). Click a key to filter by it. */
+/** Camelot wheel: outer ring majors (B), inner ring minors (A). Click a key to filter by it. With a Lab scale, the keys that fit it are marked. */
 export function KeyWheel({
   value,
   counts,
@@ -22,7 +23,7 @@ export function KeyWheel({
   counts: number[] | undefined;
   onPick: (pc: number, mode: 0 | 1) => void;
 }) {
-  const compat = value?.compatible ? compatibleKeys(value.pc, value.mode) : [];
+  const compat = !value?.compatible ? [] : value.scale?.length ? fittingKeys(value.pc, value.scale) : compatibleKeys(value.pc, value.mode);
   const isSel = (pc: number, mode: 0 | 1) => value?.pc === pc && value.mode === mode;
   const isCompat = (pc: number, mode: 0 | 1) => !isSel(pc, mode) && compat.some((k) => k.pc === pc && k.mode === mode);
 

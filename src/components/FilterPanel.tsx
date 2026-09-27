@@ -254,17 +254,28 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
                         compatible: f.key?.compatible ?? true,
                         includeUnpitched: f.key?.includeUnpitched ?? true,
                         rootInScale: f.key?.rootInScale ?? true,
+                        byNotes: f.key?.byNotes ?? false,
                       },
                     });
                 }}
               />
             </div>
             <div className={cx("flex flex-col gap-1.5", !f.key && "pointer-events-none opacity-45")}>
-              <Switch checked={f.key?.compatible ?? true} onChange={(v) => f.key && setFilters({ key: { ...f.key, compatible: v } })} label="Include compatible keys" />
+              <Switch
+                checked={f.key?.compatible ?? true}
+                onChange={(v) => f.key && setFilters({ key: { ...f.key, compatible: v } })}
+                label={f.key?.scale?.length ? "Include keys that share the scale's notes" : "Include compatible keys"}
+              />
               <Switch
                 checked={f.key?.includeUnpitched ?? true}
                 onChange={(v) => f.key && setFilters({ key: { ...f.key, includeUnpitched: v } })}
                 label="Keep samples without a key (drums, noise)"
+              />
+              <Switch
+                checked={(f.key?.includeUnpitched ?? true) || (f.key?.byNotes ?? false)}
+                onChange={(v) => f.key && setFilters({ key: { ...f.key, byNotes: v } })}
+                label="…or only those whose notes fit the scale"
+                className={cx(f.key?.includeUnpitched !== false && "pointer-events-none opacity-45")}
               />
               <Switch checked={f.key?.rootInScale ?? true} onChange={(v) => f.key && setFilters({ key: { ...f.key, rootInScale: v } })} label="One-shots: root note in the scale" />
             </div>

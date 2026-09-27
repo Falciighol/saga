@@ -4,6 +4,7 @@ import { memo, useEffect, useMemo, useRef } from "react";
 import { dragSample, sampleMenu } from "../lib/actions";
 import { bpmText, fmtLength, keyText, sourceHint } from "../lib/format";
 import { compatibleKeys } from "../lib/keys";
+import { fittingKeys, plainScale, scaleById, scaleNotes } from "../lib/theory";
 import type { SampleRow, SortKey } from "../lib/types";
 import { activeFilterCount, useBrowse } from "../store/browse";
 import { usePlayer } from "../store/player";
@@ -40,10 +41,11 @@ function useKeyMatcher() {
   const filterKey = useBrowse((s) => s.filters.key);
   const projectKey = useProject((s) => s.key);
   return useMemo(() => {
-    const key = filterKey ?? (projectKey ? { ...projectKey, compatible: true } : null);
+    const key = filterKey ?? (projectKey ? { pc: projectKey.pc, mode: projectKey.mode, compatible: true, scale: scaleById(projectKey.scale)?.steps } : null);
     if (!key) return null;
-    const set = key.compatible ? compatibleKeys(key.pc, key.mode) : [{ pc: key.pc, mode: key.mode }];
-    const scale = (key.mode === 1 ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]).map((i) => (key.pc + i) % 12);
+    const steps = key.scale?.length ? key.scale : null;
+    const set = !key.compatible ? [{ pc: key.pc, mode: key.mode }] : steps ? fittingKeys(key.pc, steps) : compatibleKeys(key.pc, key.mode);
+    const scale = scaleNotes(key.pc, steps ?? plainScale(key.mode).steps);
     return (row: SampleRow) =>
       row.keyPc != null && (row.keyMode === 2 ? scale.includes(row.keyPc) : set.some((k) => k.pc === row.keyPc && k.mode === row.keyMode));
   }, [filterKey, projectKey]);

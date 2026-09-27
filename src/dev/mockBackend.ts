@@ -4,8 +4,9 @@
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { compatibleKeys } from "../lib/keys";
+import { fittingKeys, scaleFit, scaleNotes } from "../lib/theory";
 import { groupOf } from "../lib/soundmap";
-import type { Collection, Facets, Filters, QueryRequest, SampleRow, SourceInfo } from "../lib/types";
+import type { Collection, Facets, Filters, PitchProfile, QueryRequest, SampleRow, SourceInfo } from "../lib/types";
 import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
 
 function rng(seed: number) {
@@ -231,6 +232,60 @@ function soundMap(kind: string | null, aspect: string) {
 
 let recordTimer: number | undefined;
 
+/**
+ * A made-up pitch profile like the ones analysis stores: a key's notes with its tonic, fifth and
+ * third strongest, overtones and some noise; a root note with its fifth; drums close to flat.
+ * Some keyless melodic samples get a scale too, so "notes that fit" has something to find.
+ */
+const profiles = new Map<number, PitchProfile>();
+function mockProfile(row: SampleRow): PitchProfile {
+  const cached = profiles.get(row.id);
+  if (cached) return cached;
+  const r = rng(row.id * 7919 + 13);
+  const chroma = Array.from({ length: 12 }, () => 0.02 + r() * 0.08);
+  let hz: number | null = null;
+  let clarity = 0.1 + r() * 0.2;
+  const drum = ["Snare", "Clap", "Hat", "Perc", "Drums"].includes(row.category ?? "");
+  let pc = row.keyPc;
+  let mode = row.keyMode;
+  if (pc == null && row.category === "Kick") {
+    // An untagged kick still rings at a note, which the tuner can measure.
+    pc = Math.floor(r() * 12);
+    mode = 2;
+  } else if (pc == null && !drum && r() > 0.5) {
+    pc = Math.floor(r() * 12);
+    mode = r() > 0.5 ? 1 : 0;
+  }
+  if (pc != null && mode === 2) {
+    chroma[pc] += 1;
+    chroma[(pc + 7) % 12] += 0.35;
+    chroma[(pc + 4) % 12] += 0.1;
+    const octave = row.category === "Kick" || row.category === "Bass" ? 1 : 3;
+    hz = 440 * 2 ** ((12 * (octave + 1) + pc + (r() - 0.5) * 0.8 - 69) / 12);
+    clarity = 0.7 + r() * 0.25;
+  } else if (pc != null && (mode === 0 || mode === 1)) {
+    const steps = mode === 1 ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+    for (const iv of steps) chroma[(pc + iv) % 12] += iv === 0 ? 1 : iv === 7 ? 0.8 : iv === 3 || iv === 4 ? 0.7 : 0.25 + r() * 0.3;
+    // The fifth harmonic of the tonic, a major third up, leaks in.
+    chroma[(pc + 4) % 12] += 0.12;
+  } else if (!drum) {
+    for (let i = 0; i < 12; i++) chroma[i] += r() * 0.2;
+  }
+  const sum = chroma.reduce((a, b) => a + b, 0);
+  const norm = chroma.map((v) => v / sum);
+  const max = Math.max(...norm);
+  const profile = { chroma: norm, tonality: Math.max(0, (max - 1 / 12) / (11 / 12)), hz, clarity };
+  profiles.set(row.id, profile);
+  return profile;
+}
+
+function keySteps(k: NonNullable<Filters["key"]>): number[] {
+  return k.scale?.length ? k.scale : k.mode === 1 ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11];
+}
+
+/** Mirrors `MIN_SCALE_FIT` in src-tauri/src/keys.rs. */
+const MIN_SCALE_FIT = 0.2;
+
 function matches(r: SampleRow, f: Filters, omit?: string): boolean {
   const words = (f.text ?? "").toLowerCase().split(/\s+/).filter((w) => w && !w.includes(":"));
   const hay = `${r.name} ${r.dir} ${r.category} ${r.tags.join(" ")}`.toLowerCase();
@@ -243,11 +298,13 @@ function matches(r: SampleRow, f: Filters, omit?: string): boolean {
     if (!(inRange(r.bpm) || (f.halfDouble && (inRange(r.bpm * 2) || inRange(r.bpm / 2))))) return false;
   }
   if (omit !== "key" && f.key) {
-    const set = f.key.compatible ? compatibleKeys(f.key.pc, f.key.mode) : [{ pc: f.key.pc, mode: f.key.mode }];
+    const steps = f.key.scale?.length ? f.key.scale : null;
+    const set = !f.key.compatible ? [{ pc: f.key.pc, mode: f.key.mode }] : steps ? fittingKeys(f.key.pc, steps) : compatibleKeys(f.key.pc, f.key.mode);
+    const roots = scaleNotes(f.key.pc, steps ?? (f.key.mode === 1 ? [0, 2, 3, 5, 7, 8, 10] : [0, 2, 4, 5, 7, 9, 11]));
     if (r.keyPc == null) {
-      if (!f.key.includeUnpitched) return false;
+      if (!f.key.includeUnpitched && !(f.key.byNotes && (scaleFit(mockProfile(r).chroma, f.key.pc, keySteps(f.key)) ?? 0) >= MIN_SCALE_FIT)) return false;
     } else if (r.keyMode === 2) {
-      if (r.keyPc !== f.key.pc && !f.key.rootInScale) return false;
+      if (f.key.rootInScale ? !roots.includes(r.keyPc) : r.keyPc !== f.key.pc) return false;
     } else if (!set.some((k) => k.pc === r.keyPc && k.mode === r.keyMode)) return false;
   }
   if (omit !== "dur") {
@@ -280,6 +337,11 @@ function query(req: QueryRequest) {
   else if (req.sort === "bpm") by((r) => r.bpm);
   else if (req.sort === "duration") by((r) => r.duration);
   else if (req.sort === "key") by((r) => (r.keyPc == null ? null : r.keyPc * 3 + (r.keyMode ?? 0)));
+  else if (req.sort === "fit" && req.filters.key) {
+    const k = req.filters.key;
+    const fit = (r: SampleRow) => scaleFit(mockProfile(r).chroma, k.pc, keySteps(k)) ?? -1;
+    rows.sort((a, b) => fit(b) - fit(a) || a.name.localeCompare(b.name));
+  }
   else if (req.sort === "random") rows = rows.map((r) => [((r.id * 2654435761 + req.seed) % 4294967291) >>> 0, r] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
   return { total: rows.length, offset: req.offset, rows: rows.slice(req.offset, req.offset + req.limit) };
 }
@@ -349,6 +411,130 @@ function playbackEvent(state: string) {
   });
 }
 
+/** Rough Web Audio stand-ins for the Rust synth presets, so the Lab can be heard in a plain browser. */
+let audio: AudioContext | null = null;
+const sounding = new Set<AudioScheduledSourceNode>();
+/** Notes from the progression player, stopped on their own. */
+const seqSounding = new Set<AudioScheduledSourceNode>();
+
+function mockNote(ctx: AudioContext, note: number, t0: number, length: number, velocity: number, preset: string, from = sounding) {
+  const f = 440 * 2 ** ((note - 69) / 12);
+  const g = ctx.createGain();
+  const v = velocity * 0.18;
+  const attack = preset === "pad" ? 0.28 : 0.004;
+  const release = preset === "pad" ? 0.45 : preset === "pluck" ? 0.06 : 0.12;
+  const end = t0 + Math.max(0.05, length);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.linearRampToValueAtTime(v, t0 + attack);
+  if (preset !== "pad") g.gain.setTargetAtTime(preset === "pluck" ? 0 : v * 0.2, t0 + attack, preset === "pluck" ? 0.35 : 0.6);
+  g.gain.setTargetAtTime(0, end, release / 3);
+  g.connect(ctx.destination);
+  (preset === "pad" ? [0.9965, 1.0035, 0.5] : [1, 2]).forEach((ratio, i) => {
+    const o = ctx.createOscillator();
+    o.type = preset === "keys" ? "sine" : preset === "pad" ? "triangle" : "sawtooth";
+    o.frequency.value = f * ratio;
+    const og = ctx.createGain();
+    og.gain.value = i === 0 ? 1 : preset === "pad" ? 0.6 : 0.15;
+    let out: AudioNode = og;
+    if (preset === "pluck") {
+      const lp = ctx.createBiquadFilter();
+      lp.frequency.setValueAtTime(f * 8, t0);
+      lp.frequency.exponentialRampToValueAtTime(f * 1.5, t0 + 0.4);
+      og.connect(lp);
+      out = lp;
+    }
+    o.connect(og);
+    out.connect(g);
+    o.start(t0);
+    o.stop(end + release * 4);
+    from.add(o);
+    o.onended = () => from.delete(o);
+  });
+}
+
+function mockNotes(notes: { note: number; at?: number; length: number; velocity?: number }[], preset: string) {
+  audio ??= new AudioContext();
+  const ctx = audio;
+  void ctx.resume();
+  for (const n of notes) mockNote(ctx, n.note, ctx.currentTime + 0.02 + (n.at ?? 0), n.length, n.velocity ?? 1, preset);
+}
+
+/** The progression player: a look-ahead scheduler at the project tempo, like the Rust one without loop following. */
+interface MockSequence {
+  notes: { note: number; start: number; length: number; velocity: number }[];
+  beats: number;
+  bpm: number;
+  preset: string;
+}
+let seq: MockSequence | null = null;
+/** Audio-clock time of beat 0, beats scheduled so far, last whole beat reported. */
+let seqOrigin = 0;
+let seqUntil = 0;
+let seqReported = -Infinity;
+let seqTimer: number | undefined;
+let clickOn = false;
+
+function seqBeat(ctx: AudioContext, s: MockSequence): number {
+  return ((ctx.currentTime - seqOrigin) * s.bpm) / 60;
+}
+
+function mockClick(ctx: AudioContext, t0: number, down: boolean) {
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.frequency.value = down ? 1760 : 1175;
+  g.gain.setValueAtTime(0.25, t0);
+  g.gain.setTargetAtTime(0, t0, 0.025);
+  o.connect(g).connect(ctx.destination);
+  o.start(t0);
+  o.stop(t0 + 0.2);
+}
+
+function tickSequence() {
+  const ctx = audio;
+  const s = seq;
+  if (!ctx || !s || s.beats <= 0) return;
+  const spb = 60 / s.bpm;
+  const horizon = seqBeat(ctx, s) + 0.12 / spb;
+  const from = Math.max(0, seqUntil);
+  for (let pass = Math.floor(from / s.beats); pass * s.beats < horizon; pass++) {
+    for (const n of s.notes) {
+      const b = pass * s.beats + n.start;
+      if (b >= from && b < horizon) mockNote(ctx, n.note, seqOrigin + b * spb, n.length * spb, n.velocity, s.preset, seqSounding);
+    }
+  }
+  if (clickOn) for (let b = Math.ceil(from); b < horizon; b++) mockClick(ctx, seqOrigin + b * spb, b % 4 === 0);
+  seqUntil = Math.max(seqUntil, horizon);
+  const beat = seqBeat(ctx, s);
+  if (Math.floor(beat) !== seqReported) {
+    seqReported = Math.floor(beat);
+    void emit("lab-transport", { playing: true, beat, bpm: s.bpm });
+  }
+}
+
+function playSequence(s: MockSequence) {
+  audio ??= new AudioContext();
+  void audio.resume();
+  if (seq) {
+    // Keep its place at the new tempo.
+    seqOrigin = audio.currentTime - (seqBeat(audio, seq) * 60) / s.bpm;
+  } else {
+    seqOrigin = audio.currentTime + 0.05;
+    seqUntil = 0;
+    seqReported = -Infinity;
+    seqTimer = window.setInterval(tickSequence, 25);
+  }
+  seq = s;
+  tickSequence();
+}
+
+function stopSequence() {
+  if (!seq) return;
+  window.clearInterval(seqTimer);
+  seq = null;
+  if (audio) for (const o of seqSounding) o.stop(audio.currentTime + 0.05);
+  void emit("lab-transport", { playing: false, beat: 0, bpm: 0 });
+}
+
 /** Where the mock "playhead" is along the timeline right now. */
 function mockTimeline(): number {
   if (!playing) return 0;
@@ -387,6 +573,10 @@ export function installMockBackend() {
           return facets(args.filters as Filters);
         case "get_sample":
           return ROWS.find((r) => r.id === args.id) ?? null;
+        case "pitch_profile": {
+          const r = ROWS.find((x) => x.id === args.id);
+          return r ? mockProfile(r) : null;
+        }
         case "library_stats":
           return {
             total: ROWS.length,
@@ -517,6 +707,23 @@ export function installMockBackend() {
             playbackEvent(playing.paused ? "paused" : "playing");
           }
           return null;
+        case "play_notes":
+          mockNotes(args.notes as { note: number; at?: number; length: number; velocity?: number }[], args.preset as string);
+          return null;
+        case "stop_notes":
+          if (audio) for (const o of sounding) o.stop(audio.currentTime + 0.05);
+          return null;
+        case "play_sequence":
+          playSequence(args.sequence as MockSequence);
+          return null;
+        case "stop_sequence":
+          stopSequence();
+          return null;
+        case "set_click":
+          clickOn = Boolean(args.on);
+          return null;
+        case "save_midi":
+          return `/Users/me/Music/Saga/Renders/${args.name} (${args.label}).mid`;
         case "render_sample":
           return new Promise((resolve) => setTimeout(() => resolve(`/Users/me/Music/Saga/Renders/${args.label || "render"}.wav`), 200));
         case "save_variation":

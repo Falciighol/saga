@@ -1,3 +1,5 @@
+import type { ProjectKey } from "./processing";
+import { isPlain, rootName, scaleById, scaleBySteps } from "./theory";
 import type { KeyFilter } from "./types";
 
 const MAJOR = ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
@@ -44,9 +46,19 @@ export function compatibleKeys(pc: number, mode: 0 | 1): { pc: number; mode: 0 |
 }
 
 export function keyFilterLabel(k: KeyFilter): string {
+  const scale = scaleBySteps(k.scale);
+  if (scale && !isPlain(scale)) return `${rootName(k.pc, scale.mode)} ${scale.name}${k.compatible ? " + fitting keys" : ""}`;
   return `${keyLongName(k.pc, k.mode).replace(" minor", " min").replace(" major", " maj")}${k.compatible ? " + compatible" : ""}`;
 }
 
+/** "A min", "C maj", or the Lab scale: "A Dorian". */
+export function projectKeyLabel(k: ProjectKey): string {
+  const scale = scaleById(k.scale);
+  if (scale && !isPlain(scale)) return `${rootName(k.pc, scale.mode)} ${scale.name}`;
+  return keyLongName(k.pc, k.mode).replace(" minor", " min").replace(" major", " maj");
+}
+
+/** Search syntax has no scales, so a scale filter reads as its closest key. */
 export function keyFilterToken(k: KeyFilter): string {
   return `key:${keyName(k.pc, k.mode)}${k.compatible ? "+" : ""}`;
 }

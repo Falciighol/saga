@@ -1,11 +1,12 @@
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Copy, FolderSearch, FolderPlus, ListMinus, Pause, Play, Plus, Star } from "lucide-react";
+import { AudioLines, Copy, FolderSearch, FolderPlus, ListMinus, Music2, Pause, Play, Plus, Star } from "lucide-react";
 import { create } from "zustand";
 import type { MenuItem } from "../components/Menu";
 import { usePrompt } from "../components/Prompt";
 import { SimilarIcon } from "../components/ViewToggle";
 import { useBrowse } from "../store/browse";
+import { useLab } from "../store/lab";
 import { useLibrary } from "../store/library";
 import { usePlayer } from "../store/player";
 import { useSimilar } from "../store/similar";
@@ -57,6 +58,14 @@ export function dragSample(row: SampleRow) {
 }
 
 // ---- common sample actions ----
+
+/** Opens a Lab tool on this sample: the key finder, or the tuner for a one-shot. */
+export function openInLab(row: SampleRow, index: number, tool: "finder" | "tempo") {
+  useBrowse.getState().selectRow(row, index, { play: false });
+  if (useUi.getState().mini) useUi.getState().setMini(false);
+  useLab.getState().set(tool === "finder" ? { tool, finderSource: "sample" } : { tool });
+  useUi.getState().setView("lab");
+}
 
 /** Shows the sound map with the samples that sound most like this one. */
 export function findSimilar(row: SampleRow) {
@@ -147,6 +156,8 @@ export function sampleMenu(row: SampleRow, index: number): MenuItem[] {
       onSelect: () => browse.toggleFavorite(row),
     },
     { label: "Find similar sounds", icon: <SimilarIcon size={14} />, hint: "G", onSelect: () => findSimilar(row) },
+    { label: "Find its key", icon: <Music2 size={14} />, onSelect: () => openInLab(row, index, "finder") },
+    ...(row.kind === "oneshot" ? [{ label: "Tune it to the key", icon: <AudioLines size={14} />, onSelect: () => openInLab(row, index, "tempo") } as MenuItem] : []),
     { label: "Add to collection", icon: <FolderPlus size={14} />, submenu: collectionSubmenu([row.id]) },
     ...(view.type === "collection"
       ? [

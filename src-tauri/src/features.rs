@@ -2,6 +2,7 @@
 //! Find similar and the sound map, plus the onset envelope, chroma and pitch that tempo
 //! and key detection work from.
 
+use crate::model::PitchProfile;
 use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
 use std::cell::RefCell;
@@ -291,15 +292,15 @@ pub fn describe(x: &[f32], sr: u32) -> Option<Sound> {
     let (all, fund) = (norm(&hist.all), norm(&hist.fund));
     let chroma = fold(&all, tuning(&all));
     let tonality = tonality(&chroma);
-    features[30..42].copy_from_slice(&chroma);
+    features[CHROMA].copy_from_slice(&chroma);
     let pitch = detect_pitch(x, sr);
     if let Some(p) = pitch {
-        features[42] = p.hz.log2();
-        features[43] = p.clarity;
+        features[PITCH_HZ] = p.hz.log2();
+        features[PITCH_CLARITY] = p.clarity;
     } else {
-        features[43] = 0.0;
+        features[PITCH_CLARITY] = 0.0;
     }
-    features[44] = tonality;
+    features[TONALITY] = tonality;
 
     envelope_features(x, srf, &onset, srf / hop as f32, &mut features[ENVELOPE]);
     features[BRIGHTNESS] = 10f32.powf(features[26]);
@@ -587,6 +588,49 @@ pub fn from_blob(b: &[u8]) -> Option<Vec<f32>> {
     Some(b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
 }
 
+/// Where the 12-note pitch profile sits in the feature vector.
+pub const CHROMA: Range<usize> = PITCH.start..PITCH.start + 12;
+/// log2 of the fundamental in Hz, how clearly pitched (0–1), and how tonal the profile is.
+const PITCH_HZ: usize = PITCH.start + 12;
+const PITCH_CLARITY: usize = PITCH.start + 13;
+const TONALITY: usize = PITCH.start + 14;
+
+fn blob_value(b: &[u8], i: usize) -> f32 {
+    f32::from_le_bytes([b[i * 4], b[i * 4 + 1], b[i * 4 + 2], b[i * 4 + 3]])
+}
+
+/// The pitch profile out of a stored feature vector, without decoding the rest (for SQL).
+pub fn chroma_from_blob(b: &[u8]) -> Option<[f32; 12]> {
+    if b.len() != LEN * 4 {
+        return None;
+    }
+    let mut out = [0f32; 12];
+    for (k, v) in out.iter_mut().enumerate() {
+        *v = blob_value(b, CHROMA.start + k);
+    }
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// What a stored description says about a sample's notes.
+pub fn pitch_profile(features: &[f32]) -> Option<PitchProfile> {
+    if features.len() != LEN {
+        return None;
+    }
+    let mut chroma = [0f32; 12];
+    chroma.copy_from_slice(&features[CHROMA]);
+    if !chroma.iter().all(|v| v.is_finite()) {
+        return None;
+    }
+    let or_zero = |v: f32| if v.is_finite() { v } else { 0.0 };
+    let hz = features[PITCH_HZ];
+    Some(PitchProfile {
+        chroma,
+        tonality: or_zero(features[TONALITY]),
+        hz: hz.is_finite().then(|| 2f32.powf(hz)),
+        clarity: or_zero(features[PITCH_CLARITY]),
+    })
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -626,6 +670,12 @@ pub mod tests {
         assert!(s.tonality > 0.5);
         assert_eq!(s.features.len(), LEN);
         assert!(s.features[..DIM].iter().filter(|v| v.is_nan()).count() == 0);
+        // The profile reads back from storage as it was measured.
+        let blob = to_blob(&s.features);
+        assert_eq!(chroma_from_blob(&blob), Some(s.chroma));
+        let p = pitch_profile(&from_blob(&blob).unwrap()).unwrap();
+        assert!((p.hz.unwrap() - 220.0).abs() < 2.0 && p.clarity > 0.5 && (p.tonality - s.tonality).abs() < 1e-6);
+        assert_eq!(chroma_from_blob(&blob[4..]), None);
     }
 
     #[test]

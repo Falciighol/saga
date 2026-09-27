@@ -61,6 +61,10 @@ export interface KeyFilter {
   compatible: boolean;
   includeUnpitched: boolean;
   rootInScale: boolean;
+  /** A Lab scale as semitones above `pc`: compatible keys become keys that share its notes, and one-shot roots are checked against it. */
+  scale?: number[] | null;
+  /** Samples with no key pass when the notes in their stored pitch profile fit the scale (moot while `includeUnpitched` keeps them all). */
+  byNotes?: boolean;
 }
 
 export interface Filters {
@@ -85,7 +89,8 @@ export interface Filters {
   recent?: "added" | "played" | null;
 }
 
-export type SortKey = "relevance" | "name" | "added" | "played" | "duration" | "bpm" | "key" | "random";
+/** "fit": how well each sample's notes fit the key filter's scale, best first (see `scaleFit`). */
+export type SortKey = "relevance" | "name" | "added" | "played" | "duration" | "bpm" | "key" | "fit" | "random";
 
 export interface QueryRequest {
   filters: Filters;
@@ -213,6 +218,18 @@ export interface MapMatches {
   /** Base64 bitset over the layout's points, or null when every point matches. */
   bits: string | null;
   matched: number;
+}
+
+/** What a sample's stored description says about its notes. Mirrors `PitchProfile` in model.rs. */
+export interface PitchProfile {
+  /** Share of the pitched energy on each note, C first; all zero when nothing tonal was found. */
+  chroma: number[];
+  /** 0 for an even spread over the twelve notes, 1 for a single note. */
+  tonality: number;
+  /** The fundamental of a clearly pitched sound, in Hz. */
+  hz: number | null;
+  /** 0–1: how clearly periodic the sound is. */
+  clarity: number;
 }
 
 export interface RecordLevel {

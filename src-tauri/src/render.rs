@@ -23,6 +23,11 @@ pub fn render_to(src: &Path, params: &ProcessParams, dest: &Path) -> Result<f64,
 /// A file name that keeps the original's name and says what changed,
 /// e.g. `Bass_Loop_124_Am (128 BPM, Am, reversed).wav`.
 pub fn render_name(stem: &str, label: &str) -> String {
+    file_name(stem, label, "wav")
+}
+
+/// `stem (label).ext`, with the characters file systems reject replaced.
+pub fn file_name(stem: &str, label: &str, ext: &str) -> String {
     let clean = |s: &str| -> String {
         s.chars()
             .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control() { '-' } else { c })
@@ -31,20 +36,43 @@ pub fn render_name(stem: &str, label: &str) -> String {
             .to_string()
     };
     let label = clean(label);
-    if label.is_empty() { format!("{}.wav", clean(stem)) } else { format!("{} ({label}).wav", clean(stem)) }
+    if label.is_empty() { format!("{}.{ext}", clean(stem)) } else { format!("{} ({label}).{ext}", clean(stem)) }
+}
+
+/// `name` split before its extension: `("x (rev)", ".wav")`.
+fn split_ext(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    }
+}
+
+/// `name`, then `name 2`, `name 3`… in `dir`.
+fn candidates<'a>(dir: &'a Path, name: &'a str) -> impl Iterator<Item = PathBuf> + 'a {
+    let (stem, ext) = split_ext(name);
+    std::iter::once(dir.join(name)).chain((2..).map(move |i| dir.join(format!("{stem} {i}{ext}"))))
 }
 
 /// `name`, or `name 2`, `name 3`… whichever doesn't exist yet in `dir`.
 pub fn free_path(dir: &Path, name: &str) -> PathBuf {
-    let first = dir.join(name);
-    if !first.exists() {
-        return first;
+    candidates(dir, name).find(|p| !p.exists()).expect("some suffix is free")
+}
+
+/// Writes `bytes` to `name` in `dir`, or to `name 2`, `name 3`… when that's taken by something
+/// else. A file that already holds exactly these bytes is reused, so dragging the same clip out
+/// twice doesn't pile up copies, and a changed clip never overwrites one a DAW project may use.
+pub fn write_once(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for p in candidates(dir, name) {
+        if !p.exists() {
+            std::fs::write(&p, bytes).map_err(|e| e.to_string())?;
+            return Ok(p);
+        }
+        if std::fs::read(&p).map_err(|e| e.to_string())? == bytes {
+            return Ok(p);
+        }
     }
-    let stem = name.trim_end_matches(".wav");
-    (2..)
-        .map(|i| dir.join(format!("{stem} {i}.wav")))
-        .find(|p| !p.exists())
-        .expect("some suffix is free")
+    unreachable!("candidates never run out")
 }
 
 /// Identity of a render: the source file version and the parameters that affect the audio.
@@ -156,6 +184,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("x (rev).wav"), b"").unwrap();
         assert_eq!(free_path(dir.path(), "x (rev).wav"), dir.path().join("x (rev) 2.wav"));
+        assert_eq!(file_name("Night drive", "124 BPM, A min", "mid"), "Night drive (124 BPM, A min).mid");
+    }
+
+    #[test]
+    fn identical_files_are_reused_and_changed_ones_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_once(dir.path(), "p.mid", b"one").unwrap();
+        assert_eq!(a, dir.path().join("p.mid"));
+        assert_eq!(write_once(dir.path(), "p.mid", b"one").unwrap(), a);
+        let b = write_once(dir.path(), "p.mid", b"two").unwrap();
+        assert_eq!(b, dir.path().join("p 2.mid"));
+        assert_eq!(std::fs::read(&a).unwrap(), b"one");
+        assert_eq!(write_once(dir.path(), "p.mid", b"two").unwrap(), b);
     }
 
     #[test]

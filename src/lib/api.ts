@@ -12,6 +12,7 @@ import type {
   LibraryStats,
   MapLayout,
   MapMatches,
+  PitchProfile,
   PlaybackEvent,
   QueryRequest,
   QueryResult,
@@ -23,6 +24,35 @@ import type {
   WaveformDetail,
 } from "./types";
 import type { ProcessParams } from "./processing";
+
+export type SynthPreset = "keys" | "pad" | "pluck";
+
+/** Mirrors `NoteEvent` in src-tauri/src/synth.rs. */
+export interface NoteEvent {
+  /** MIDI note, 60 = middle C. */
+  note: number;
+  /** Seconds from now. */
+  at?: number;
+  /** Seconds held. */
+  length: number;
+  velocity?: number;
+}
+
+/** Mirrors `TransportEvent` in src-tauri/src/sequence.rs. */
+export interface TransportEvent {
+  playing: boolean;
+  /** Beats since the progression started; negative while it waits for a loop's next bar. */
+  beat: number;
+  bpm: number;
+}
+
+/** Mirrors `Sequence` in src-tauri/src/sequence.rs; notes are timed in beats. */
+export interface Sequence {
+  notes: { note: number; start: number; length: number; velocity: number }[];
+  beats: number;
+  bpm: number;
+  preset: SynthPreset;
+}
 
 export const api = {
   listSources: () => invoke<SourceInfo[]>("list_sources"),
@@ -56,6 +86,15 @@ export const api = {
     invoke<void>("play", { id, start, looping, params }),
   setParams: (params: ProcessParams) => invoke<void>("set_params", { params }),
   setClick: (on: boolean) => invoke<void>("set_click", { on }),
+  /** Lab notes, mixed over the preview on the chosen output device. */
+  playNotes: (notes: NoteEvent[], preset: SynthPreset) => invoke<void>("play_notes", { notes, preset }),
+  stopNotes: () => invoke<void>("stop_notes"),
+  /** Loops a Lab progression, or updates the playing one in place. */
+  playSequence: (sequence: Sequence) => invoke<void>("play_sequence", { sequence }),
+  stopSequence: () => invoke<void>("stop_sequence"),
+  /** Writes a progression as a MIDI clip for dragging out; returns its path. */
+  saveMidi: (notes: Sequence["notes"], beats: number, bpm: number, name: string, label: string) =>
+    invoke<string>("save_midi", { notes, beats, bpm, name, label }),
   renderSample: (id: number, params: ProcessParams, label: string) => invoke<string>("render_sample", { id, params, label }),
   exportSample: (id: number, params: ProcessParams, dest: string) => invoke<void>("export_sample", { id, params, dest }),
   saveVariation: (id: number, params: ProcessParams, label: string) => invoke<string>("save_variation", { id, params, label }),
@@ -74,6 +113,8 @@ export const api = {
   dragIcon: () => invoke<string>("drag_icon"),
   suggestedFolders: () => invoke<SuggestedFolder[]>("suggested_folders"),
 
+  /** The notes in a sample's stored description; null until it has one. */
+  pitchProfile: (id: number) => invoke<PitchProfile | null>("pitch_profile", { id }),
   findSimilar: (id: number, aspect: Aspect, sourceId: number | null, limit = 40) =>
     invoke<SimilarResult>("find_similar", { id, aspect, sourceId, limit }),
   similarToFile: (path: string, aspect: Aspect, sourceId: number | null, limit = 40) =>
@@ -98,6 +139,8 @@ export const events = {
     listen<PlaybackEvent>("playback", (e) => cb(e.payload)),
   onRecordLevel: (cb: (e: RecordLevel) => void): Promise<UnlistenFn> =>
     listen<RecordLevel>("record-level", (e) => cb(e.payload)),
+  onTransport: (cb: (e: TransportEvent) => void): Promise<UnlistenFn> =>
+    listen<TransportEvent>("lab-transport", (e) => cb(e.payload)),
 };
 
 export function errorMessage(e: unknown): string {

@@ -1,15 +1,17 @@
 import { useRef, useState } from "react";
 import { fmtBpm } from "../lib/format";
-import { camelot, keyLongName } from "../lib/keys";
+import { camelot, keyLongName, projectKeyLabel } from "../lib/keys";
+import { isPlain, scaleById } from "../lib/theory";
+import { useUi } from "../store/ui";
 import { useProject } from "../store/project";
 import { KeyWheel } from "./KeyWheel";
 import { Popover } from "./Popover";
-import { cx, Switch } from "./ui";
+import { cx, Kbd, Switch } from "./ui";
 
 const MIN_BPM = 30;
 const MAX_BPM = 300;
 
-function clampBpm(v: number): number {
+export function clampBpm(v: number): number {
   return Math.round(Math.min(MAX_BPM, Math.max(MIN_BPM, v)) * 100) / 100;
 }
 
@@ -83,7 +85,10 @@ export function TempoControl({ compact }: { compact?: boolean }) {
 
 export function KeyControl({ compact }: { compact?: boolean }) {
   const key = useProject((s) => s.key);
+  const scaleLock = useProject((s) => s.scaleLock);
   const set = useProject((s) => s.set);
+  const scale = scaleById(key?.scale);
+  const labScale = scale && !isPlain(scale) ? scale : null;
   return (
     <Popover
       align="right"
@@ -91,13 +96,13 @@ export function KeyControl({ compact }: { compact?: boolean }) {
         <button
           type="button"
           aria-expanded={open}
-          aria-label={key ? `Project key, ${keyLongName(key.pc, key.mode)}` : "Set the project key"}
+          aria-label={key ? `Project key, ${labScale ? projectKeyLabel(key) : keyLongName(key.pc, key.mode)}` : "Set the project key"}
           onClick={toggle}
           className={cx("flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 whitespace-nowrap hover:bg-raised", open ? "border-accent" : "border-line2")}
         >
           {key ? (
             <>
-              <span className={cx("font-medium", compact ? "text-ui" : "text-body")}>{keyLongName(key.pc, key.mode).replace(" minor", " min").replace(" major", " maj")}</span>
+              <span className={cx("font-medium", compact ? "text-ui" : "text-body")}>{projectKeyLabel(key)}</span>
               {!compact && <span className="font-mono text-micro text-text3">{camelot(key.pc, key.mode)}</span>}
             </>
           ) : (
@@ -108,18 +113,31 @@ export function KeyControl({ compact }: { compact?: boolean }) {
     >
       {(close) => (
         <div className="flex w-[272px] flex-col items-center gap-3 p-4">
-          <span className="self-start text-small text-text3">Project key — used to match and highlight compatible samples</span>
+          <span className="self-start text-small text-text3">
+            {labScale ? `${projectKeyLabel(key!)}, from the Lab. Samples in the keys marked below fit it; picking a key replaces it.` : "Project key — used to match and highlight compatible samples"}
+          </span>
           <KeyWheel
-            value={key ? { ...key, compatible: true, includeUnpitched: true, rootInScale: true } : null}
+            value={key ? { pc: key.pc, mode: key.mode, compatible: true, includeUnpitched: true, rootInScale: true, scale: labScale?.steps } : null}
             counts={undefined}
             onPick={(pc, mode) => {
               set({ key: key && key.pc === pc && key.mode === mode ? null : { pc, mode } });
               close();
             }}
           />
-          <button type="button" onClick={() => { set({ key: null }); close(); }} className="h-7 self-stretch rounded-md text-small text-text2 hover:bg-raised">
-            No project key
-          </button>
+          <div className={cx("flex flex-col gap-0.5 self-stretch", !key && "pointer-events-none opacity-45")}>
+            <Switch checked={scaleLock} onChange={(v) => set({ scaleLock: v })} label="Scale lock" className="h-6" />
+            <span className="text-micro leading-snug text-text3">
+              <Kbd>[</Kbd> <Kbd>]</Kbd> and the pitch buttons step a sample through {key ? projectKeyLabel(key) : "the key"} instead of by semitones.
+            </span>
+          </div>
+          <div className="flex gap-1 self-stretch">
+            <button type="button" onClick={() => { set({ key: null }); close(); }} className="h-7 flex-1 rounded-md text-small text-text2 hover:bg-raised">
+              No project key
+            </button>
+            <button type="button" onClick={() => { useUi.getState().setView("lab"); close(); }} title="Scales, modes and chords (H)" className="h-7 flex-1 rounded-md text-small text-text2 hover:bg-raised">
+              Open the Lab
+            </button>
+          </div>
         </div>
       )}
     </Popover>

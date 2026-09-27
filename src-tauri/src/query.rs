@@ -5,7 +5,7 @@
 //! `is:loop`, `is:oneshot`, `is:fav`, `is:mono`, `is:stereo`, `cat:kick`, `tag:warm`,
 //! `-tag:808`, `len:<2s`, `len:1-4s`, `ext:wav` and `-word` to exclude a word.
 
-use crate::keys::{parse_user_key, Key, Mode};
+use crate::keys::{fitting_keys, parse_user_key, pc_mask, scale_notes, Key, Mode, MIN_SCALE_FIT};
 use crate::meta::CATEGORIES;
 use crate::model::{Filters, KeyFilter};
 use rusqlite::types::Value;
@@ -141,6 +141,8 @@ pub fn parse_search(base: &Filters) -> ParsedSearch {
                         compatible,
                         include_unpitched: false,
                         root_in_scale: true,
+                        scale: None,
+                        by_notes: false,
                     });
                 })
             }
@@ -196,6 +198,19 @@ fn placeholders(n: usize) -> String {
     vec!["?"; n].join(", ")
 }
 
+/// The notes of a key filter's scale: the Lab scale if it has one, else the plain major or minor.
+fn key_mask(k: &KeyFilter) -> u16 {
+    match k.scale.as_deref().filter(|s| !s.is_empty()) {
+        Some(s) => pc_mask(&scale_notes(k.pc, s)),
+        None => pc_mask(&Key::new(k.pc as i32, if k.mode == 1 { Mode::Minor } else { Mode::Major }).scale()),
+    }
+}
+
+/// What the "fit" sort measures against: the key filter's scale, if there is one.
+pub fn fit_mask(f: &Filters) -> Option<u16> {
+    f.key.as_ref().map(key_mask)
+}
+
 pub fn build_where(p: &ParsedSearch, omit: Omit, now: i64) -> Where {
     let f = &p.filters;
     let mut params: Vec<Value> = Vec::new();
@@ -240,15 +255,27 @@ pub fn build_where(p: &ParsedSearch, omit: Omit, now: i64) -> Where {
     if omit != Omit::Key {
         if let Some(k) = &f.key {
             let key = Key::new(k.pc as i32, if k.mode == 1 { Mode::Minor } else { Mode::Major });
-            let keys = if k.compatible { key.compatible() } else { vec![key] };
+            let scale = k.scale.as_deref().filter(|s| !s.is_empty());
+            let keys = match (k.compatible, scale) {
+                (true, Some(s)) => fitting_keys(k.pc, s),
+                (true, None) => key.compatible(),
+                (false, _) => vec![key],
+            };
             let codes: Vec<String> = keys.iter().map(|k| (k.pc as i64 * 2 + k.mode as i64).to_string()).collect();
-            let notes: Vec<String> = if k.root_in_scale { key.scale() } else { vec![key.pc] }.iter().map(|n| n.to_string()).collect();
+            let roots = match (k.root_in_scale, scale) {
+                (true, Some(s)) => scale_notes(k.pc, s),
+                (true, None) => key.scale(),
+                (false, _) => vec![key.pc],
+            };
+            let notes: Vec<String> = roots.iter().map(|n| n.to_string()).collect();
             let mut any = vec![
                 format!("(s.key_mode IN (0, 1) AND s.key_pc * 2 + s.key_mode IN ({}))", codes.join(", ")),
                 format!("(s.key_mode = 2 AND s.key_pc IN ({}))", notes.join(", ")),
             ];
             if k.include_unpitched {
                 any.push("s.key_pc IS NULL".into());
+            } else if k.by_notes {
+                any.push(format!("(s.key_pc IS NULL AND scale_fit(s.features, {}) >= {MIN_SCALE_FIT})", key_mask(k)));
             }
             w.push(format!("({})", any.join(" OR ")));
         }
@@ -326,10 +353,12 @@ pub fn build_where(p: &ParsedSearch, omit: Omit, now: i64) -> Where {
     Where { join, clause: w.join(" AND "), params, has_text: p.fts.is_some() }
 }
 
-pub fn order_by(sort: &str, desc: bool, has_text: bool, seed: i64) -> String {
+/// `fit`: the scale the "fit" sort ranks by (samples whose notes fit it best first).
+pub fn order_by(sort: &str, desc: bool, has_text: bool, seed: i64, fit: Option<u16>) -> String {
     let dir = if desc { "DESC" } else { "ASC" };
     let flip = if desc { "ASC" } else { "DESC" };
     match sort {
+        "fit" if fit.is_some() => format!("scale_fit(s.features, {}) DESC NULLS LAST, s.name COLLATE NOCASE", fit.unwrap()),
         "name" => format!("s.name COLLATE NOCASE {dir}, s.id"),
         "added" => format!("s.added_at {flip}, s.id {flip}"),
         "played" => format!("s.last_played {flip} NULLS LAST, s.play_count DESC"),

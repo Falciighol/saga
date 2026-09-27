@@ -468,4 +468,85 @@ mod report {
         let took = start.elapsed();
         println!("analyzed {analyzed} files in {took:.2?} ({:.1} ms/file)", took.as_secs_f64() * 1000.0 / analyzed.max(1) as f64);
     }
+
+    /// Where `keys::MIN_SCALE_FIT` comes from: how the stored pitch profile of loops whose names
+    /// state a key fits that key's scale, against keys far from it, and how often drums and
+    /// effects (no notes to speak of) would pass as fitting. Set `SAGA_DUMP` to also write every
+    /// profile as JSON for a closer look (the Lab's key finder ranking was checked on that).
+    /// `SAGA_SCAN_DIR=/path cargo test --release --lib detect::report::scale_fit_report -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn scale_fit_report() {
+        use crate::keys::{pc_mask, scale_fit, MIN_SCALE_FIT};
+        let Ok(root) = std::env::var("SAGA_SCAN_DIR") else { return };
+        let root = std::path::PathBuf::from(root);
+        let per_kind: usize = std::env::var("SAGA_REPORT_FILES").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+        let files: Vec<_> = walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file() && crate::decode::is_audio_path(e.path()))
+            .map(|e| e.into_path())
+            .collect();
+        let resolved = |p: &std::path::Path| {
+            let stem = p.file_stem().unwrap().to_string_lossy().to_string();
+            let rel = p.parent().unwrap().strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+            let dirs: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+            let m = parse_name(&stem, &dirs);
+            let r = resolve(&m, &ChunkMeta::default(), None);
+            (m, r)
+        };
+        let keyed: Vec<_> = files.iter().filter(|p| { let (m, _) = resolved(p); m.kind_hint == Some(Kind::Loop) && m.key.is_some_and(|k| k.mode != Mode::Note) }).collect();
+        let unpitched: Vec<_> = files
+            .iter()
+            .filter(|p| {
+                let (m, r) = resolved(p);
+                m.key.is_none() && r.category.is_some_and(|c| UNPITCHED_SHOTS.contains(&c) || UNPITCHED_LOOPS.contains(&c))
+            })
+            .collect();
+        println!("candidates: {} loops with a key, {} drums and effects", keyed.len(), unpitched.len());
+        let spread = |v: &[&std::path::PathBuf]| -> Vec<std::path::PathBuf> { v.iter().step_by((v.len() / per_kind).max(1)).map(|p| (*p).clone()).collect() };
+
+        let mask = |k: Key| pc_mask(&k.scale());
+        let mut dump = Vec::new();
+        let (mut own, mut far, mut near) = (Vec::new(), Vec::new(), Vec::new());
+        for p in spread(&keyed) {
+            let (m, r) = resolved(&p);
+            let k = m.key.unwrap();
+            let Ok(info) = crate::analysis::analyze(&p) else { continue };
+            let Some(s) = info.sound.as_ref() else { continue };
+            let Some(fit) = scale_fit(&s.chroma, mask(k)) else { continue };
+            own.push(fit);
+            // A tritone away shares two notes; a fifth away shares six.
+            far.push(scale_fit(&s.chroma, mask(Key::new(k.pc as i32 + 6, k.mode))).unwrap());
+            near.push(scale_fit(&s.chroma, mask(Key::new(k.pc as i32 + 7, k.mode))).unwrap());
+            dump.push(serde_json::json!({ "name": p.file_name().unwrap().to_string_lossy(), "kind": "loop", "category": r.category, "pc": k.pc, "mode": k.mode as u8, "chroma": s.chroma, "tonality": s.tonality }));
+        }
+        let mut drums = Vec::new();
+        for (i, p) in spread(&unpitched).into_iter().enumerate() {
+            let (m, r) = resolved(&p);
+            let Ok(info) = crate::analysis::analyze(&p) else { continue };
+            let Some(s) = info.sound.as_ref() else { continue };
+            // Against a different key each time, as a keyless sample would meet any filter.
+            let Some(fit) = scale_fit(&s.chroma, mask(Key::new(i as i32 * 5, if i % 2 == 0 { Mode::Minor } else { Mode::Major }))) else { continue };
+            drums.push(fit);
+            dump.push(serde_json::json!({ "name": p.file_name().unwrap().to_string_lossy(), "kind": format!("{:?}", m.kind_hint), "category": r.category, "pc": null, "mode": null, "chroma": s.chroma, "tonality": s.tonality }));
+        }
+        let quantiles = |v: &mut Vec<f32>| -> String {
+            v.sort_by(|a, b| a.total_cmp(b));
+            [0.1, 0.25, 0.5, 0.75, 0.9].iter().map(|q| format!("{:.2}", v.get(((v.len() as f32 - 1.0) * q) as usize).copied().unwrap_or(f32::NAN))).collect::<Vec<_>>().join(" ")
+        };
+        println!("fit quantiles (10 25 50 75 90%):");
+        println!("  own key      {}", quantiles(&mut own));
+        println!("  a fifth away {}", quantiles(&mut near));
+        println!("  tritone away {}", quantiles(&mut far));
+        println!("  drums & fx   {}", quantiles(&mut drums));
+        for t in [0.1, 0.15, 0.2, 0.25, 0.3, 0.4] {
+            let pass = |v: &[f32]| 100.0 * v.iter().filter(|f| **f >= t).count() as f32 / v.len().max(1) as f32;
+            let mark = if (t - MIN_SCALE_FIT).abs() < 1e-6 { " <- MIN_SCALE_FIT" } else { "" };
+            println!("  fit >= {t}: own {:.0}%, fifth {:.0}%, tritone {:.0}%, drums {:.0}%{mark}", pass(&own), pass(&near), pass(&far), pass(&drums));
+        }
+        if let Ok(out) = std::env::var("SAGA_DUMP") {
+            std::fs::write(out, serde_json::to_string(&dump).unwrap()).unwrap();
+        }
+    }
 }

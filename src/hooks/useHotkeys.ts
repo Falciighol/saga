@@ -5,10 +5,13 @@ import { useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
 import { shouldLoop, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
-import { editFor, useEdits, useProject } from "../store/project";
+import { editFor, stepPitch, useEdits, useProject } from "../store/project";
 import { useTapTempo } from "../components/ProjectControls";
 import { findSimilar } from "../lib/actions";
 import { stepScale } from "../lib/scale";
+import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
+import { scaleChords } from "../lib/theory";
+import { sameChord, sketchScale } from "../lib/progressions";
 import { useSimilar } from "../store/similar";
 import { useSoundMap } from "../store/soundmap";
 import { useUi } from "../store/ui";
@@ -37,6 +40,7 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       const editing = useEditor.getState().openId != null;
       const ui = useUi.getState();
       const onMap = ui.view === "map" && !ui.mini && !editing;
+      const inLab = ui.view === "lab" && !ui.mini && !editing;
       const similar = useSimilar.getState();
 
       if (hasMod(e) && (e.key === "k" || e.key === "f") && !e.shiftKey) {
@@ -56,6 +60,44 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
         e.preventDefault();
         openSettings();
         return;
+      }
+      // In the Lab: in Scales, arrows walk scales and roots and Space plays the scale; in
+      // Progressions, arrows pick a bar and step its chord, and Space plays the progression.
+      // The key finder and tuning work on the selected sample, so there the list's keys apply.
+      if (inLab && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const lab = useLab.getState();
+        if (lab.tool === "progressions") {
+          if (progressionKey(e)) {
+            e.preventDefault();
+            return;
+          }
+        } else if (lab.tool === "scales") {
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            lab.stepScale(e.key === "ArrowDown" ? 1 : -1);
+            playScale(lab.pc, labScale());
+            return;
+          }
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            lab.stepRoot(e.key === "ArrowRight" ? 1 : -1);
+            const pc = useLab.getState().pc;
+            const tonic = scaleChords(pc, labScale(), false)[0];
+            if (tonic) playChord(chordNotes(pc, tonic));
+            return;
+          }
+          if (e.key === " ") {
+            e.preventDefault();
+            playScale(lab.pc, labScale());
+            return;
+          }
+        }
+        if (e.key === "Escape") {
+          stopNotes();
+          stopProgression();
+          if (player.status !== "idle") player.stop();
+          return;
+        }
       }
       if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !editing) {
         if (typing && !inSearch) return;
@@ -102,15 +144,14 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
         else useEditor.getState().open(row.id);
       } else if ((e.key === "m" || e.key === "M") && !ui.mini && !editing) {
         ui.toggleView();
+      } else if ((e.key === "h" || e.key === "H") && !ui.mini) {
+        ui.toggleLab();
       } else if ((e.key === "g" || e.key === "G") && row && !ui.mini) {
         findSimilar(row);
       } else if ((e.key === "r" || e.key === "R") && row) {
         useEdits.getState().update(row.id, { reverse: !editFor(row.id).reverse });
       } else if (e.key === "[" || e.key === "]") {
-        if (row) {
-          const cur = editFor(row.id).semitones;
-          useEdits.getState().update(row.id, { semitones: Math.max(-24, Math.min(24, cur + (e.key === "]" ? 1 : -1))) });
-        }
+        if (row) stepPitch(row, e.key === "]" ? 1 : -1);
       } else if (e.key === "s" || e.key === "S") {
         useProject.getState().set({ sync: !useProject.getState().sync });
       } else if (e.key === "k" || e.key === "K") {
@@ -130,4 +171,36 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [search, openSettings, tap]);
+}
+
+/** Progressions keys: Space plays, ← → pick a bar, ↑ ↓ step its chord through the scale, ⌫ clears it. */
+function progressionKey(e: KeyboardEvent): boolean {
+  const lab = useLab.getState();
+  const { sketch, bar } = lab;
+  if (e.key === " ") {
+    toggleProgression();
+    return true;
+  }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    const next = (bar + (e.key === "ArrowRight" ? 1 : -1) + sketch.length) % sketch.length;
+    lab.selectBar(next);
+    const ch = sketch.bars[next];
+    if (ch) auditionChord(sketch.pc, ch);
+    return true;
+  }
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    const palette = scaleChords(sketch.pc, sketchScale(sketch), lab.sevenths);
+    if (!palette.length) return true;
+    const i = palette.findIndex((c) => sameChord(c, sketch.bars[bar]));
+    const step = e.key === "ArrowUp" ? 1 : -1;
+    const c = palette[i < 0 ? 0 : (i + step + palette.length) % palette.length];
+    lab.setChord(bar, { iv: c.iv, quality: c.quality });
+    auditionChord(sketch.pc, c);
+    return true;
+  }
+  if (e.key === "Backspace" || e.key === "Delete") {
+    lab.setChord(bar, null);
+    return true;
+  }
+  return false;
 }

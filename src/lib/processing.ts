@@ -9,7 +9,10 @@ export type Multiplier = "auto" | 0.5 | 1 | 2;
 
 export interface ProjectKey {
   pc: number;
+  /** Closest major (0) or minor (1); what Match key and Camelot codes use. */
   mode: 0 | 1;
+  /** A scale from the Lab (see src/lib/theory.ts); none means plain major or minor. */
+  scale?: string | null;
 }
 
 export interface Project {
@@ -19,6 +22,8 @@ export interface Project {
   sync: boolean;
   /** Pitched samples are transposed to the project key. */
   matchKey: boolean;
+  /** `[ ]` and the pitch buttons step through the project key's scale instead of by semitones. */
+  scaleLock: boolean;
   click: boolean;
   mode: StretchMode;
   formants: boolean;

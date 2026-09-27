@@ -4,8 +4,10 @@ use crate::audio::{output_devices, Cmd};
 use crate::dsp::ProcessParams;
 use crate::model::*;
 use crate::record::{self, EmitLevel};
-use crate::render::{self, free_path, render_key, render_name, render_to};
+use crate::render::{self, file_name, free_path, render_key, render_name, render_to, write_once};
+use crate::sequence::{SeqNote, Sequence};
 use crate::sounds::{Aspect, SoundIndex};
+use crate::synth::{NoteEvent, Preset};
 use crate::{analysis, features, map, AppState};
 use base64::Engine as _;
 use serde::Serialize;
@@ -169,6 +171,43 @@ pub async fn set_params(state: State<'_, AppState>, params: ProcessParams) -> Cm
 pub async fn set_click(state: State<'_, AppState>, on: bool) -> CmdResult<()> {
     state.engine.send(Cmd::SetClick(on));
     Ok(())
+}
+
+/// Plays Lab notes (scales, chords) over the preview, on the chosen output device.
+#[tauri::command]
+pub async fn play_notes(state: State<'_, AppState>, notes: Vec<NoteEvent>, preset: Preset) -> CmdResult<()> {
+    state.engine.send(Cmd::PlayNotes { notes, preset });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_notes(state: State<'_, AppState>) -> CmdResult<()> {
+    state.engine.send(Cmd::StopNotes);
+    Ok(())
+}
+
+/// Loops a Lab progression, or updates the one playing without losing its place. It follows the
+/// tempo of a playing loop, otherwise `sequence.bpm`; "lab-transport" events say where it is.
+#[tauri::command]
+pub async fn play_sequence(state: State<'_, AppState>, sequence: Sequence) -> CmdResult<()> {
+    state.engine.send(Cmd::PlaySequence(sequence));
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_sequence(state: State<'_, AppState>) -> CmdResult<()> {
+    state.engine.send(Cmd::StopSequence);
+    Ok(())
+}
+
+/// Writes a progression as a MIDI clip into ~/Music/Saga/Renders for dragging into a DAW, and
+/// returns its path. The same clip dragged again reuses its file.
+#[tauri::command]
+pub async fn save_midi(state: State<'_, AppState>, notes: Vec<SeqNote>, beats: f64, bpm: f64, name: String, label: String) -> CmdResult<String> {
+    let bytes = crate::midi::write_midi(&notes, beats, bpm, &name);
+    let dir = state.music_dir.join(render::RENDERS_DIR);
+    let path = write_once(&dir, &file_name(&name, &label, "mid"), &bytes)?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 fn stem_of(path: &Path) -> String {
@@ -376,6 +415,13 @@ fn similar_items(state: &AppState, ix: &SoundIndex, hits: Vec<(usize, f32)>) -> 
     let ids: Vec<i64> = hits.iter().map(|(i, _)| ix.ids[*i]).collect();
     let rows = state.db.samples_by_ids(&ids).map_err(err)?;
     Ok(rows.into_iter().map(|row| SimilarItem { score: scores[&row.id], row }).collect())
+}
+
+/// The notes in a sample's stored description, for the Lab's key finder and tuning tools.
+/// Null until the sample has been described.
+#[tauri::command]
+pub async fn pitch_profile(state: State<'_, AppState>, id: i64) -> CmdResult<Option<PitchProfile>> {
+    state.db.pitch_profile(id).map_err(err)
 }
 
 /// Samples that sound like `id`, of the same kind (one-shot or loop).

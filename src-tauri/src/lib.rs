@@ -12,11 +12,14 @@ mod indexer;
 mod keys;
 mod map;
 mod meta;
+mod midi;
 mod model;
 mod query;
 mod record;
 mod render;
+mod sequence;
 mod sounds;
+mod synth;
 
 use audio::Engine;
 use db::Db;
@@ -151,10 +154,16 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::suggested_folders,
             commands::set_params,
             commands::set_click,
+            commands::play_notes,
+            commands::stop_notes,
+            commands::play_sequence,
+            commands::stop_sequence,
+            commands::save_midi,
             commands::render_sample,
             commands::export_sample,
             commands::save_variation,
             commands::waveform_detail,
+            commands::pitch_profile,
             commands::find_similar,
             commands::similar_to_file,
             commands::start_recording,
@@ -186,11 +195,15 @@ pub fn run() {
             let indexer = Indexer::start(db.clone(), emit);
 
             let handle = app.handle().clone();
+            let transport = app.handle().clone();
             let engine = Engine::start(
                 db.get_setting("output_device"),
                 0.8,
                 Arc::new(move |ev| {
                     let _ = handle.emit("playback", ev);
+                }),
+                Arc::new(move |ev| {
+                    let _ = transport.emit("lab-transport", ev);
                 }),
             );
 
@@ -227,7 +240,10 @@ mod ipc_tests {
                 cmd: cmd.into(),
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
-                url: "tauri://localhost".parse().unwrap(),
+                // The page's own origin, as the real frontend sends. A hardcoded `tauri://localhost`
+                // counts as remote on Windows (there it's `http://tauri.localhost`), and remote
+                // origins are rejected by the ACL, which the mock context leaves empty.
+                url: w.url().unwrap(),
                 body: tauri::ipc::InvokeBody::Json(body),
                 headers: Default::default(),
                 invoke_key: INVOKE_KEY.to_string(),
@@ -270,7 +286,7 @@ mod ipc_tests {
         let app = with_commands(mock_builder()).build(mock_context(noop_assets())).unwrap();
         let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
         let indexer = Indexer::start(db.clone(), Arc::new(|_, _| {}));
-        let engine = Engine::start(None, 0.8, Arc::new(|_| {}));
+        let engine = Engine::start(None, 0.8, Arc::new(|_| {}), Arc::new(|_| {}));
         app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music")));
         let w = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
 
@@ -350,6 +366,20 @@ mod ipc_tests {
         for aspect in ["timbre", "pitch", "envelope"] {
             assert!(call(&w, "find_similar", json!({ "id": bass_id, "aspect": aspect, "sourceId": source_id, "limit": null })).is_ok());
         }
+        // The Lab reads a sample's notes from its stored description: all three are a 110 Hz sine.
+        let profile = call(&w, "pitch_profile", json!({ "id": bass_id })).unwrap();
+        let chroma: Vec<f64> = profile["chroma"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(chroma.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0, 9, "{profile}");
+        assert!((profile["hz"].as_f64().unwrap() - 110.0).abs() < 1.5, "{profile}");
+        assert!(profile["clarity"].as_f64().unwrap() > 0.5 && profile["tonality"].is_number());
+        assert_eq!(call(&w, "pitch_profile", json!({ "id": 999_999 })), Ok(Value::Null));
+        // A Lab scale filter that also takes keyless samples by their notes, sorted by fit, as
+        // the Lab's "Show samples that fit" sends it (the kick's root note, A, is in the scale).
+        let by_notes =json!({ "pc": 9, "mode": 1, "compatible": false, "includeUnpitched": false, "rootInScale": true, "scale": [0, 2, 3, 5, 7, 8, 10], "byNotes": true });
+        let fits = call(&w, "query_samples", json!({ "request": { "filters": ui_filters(json!({ "key": by_notes })), "sort": "fit", "desc": false, "offset": 0, "limit": 10, "seed": 1 } })).unwrap();
+        let names: Vec<&str> = fits["rows"].as_array().unwrap().iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(names, ["Kick_Dusty_03", "Nightdrive_Bass_Loop_124_Am"], "{fits}");
+
         let kick_path = format!("{lib_path}/Drums/One Shots/Kick_Dusty_03.wav");
         let by_file = call(&w, "similar_to_file", json!({ "path": kick_path, "aspect": "overall", "sourceId": null, "limit": 5 })).unwrap();
         assert_eq!(by_file["items"][0]["row"]["name"], "Kick_Dusty_03");
@@ -408,6 +438,20 @@ mod ipc_tests {
         assert_eq!(call(&w, "play", json!({ "id": 999_999, "start": null, "looping": true, "params": params })), Err(json!("Sample not found")));
         assert!(call(&w, "set_params", json!({ "params": params })).is_ok());
         assert!(call(&w, "set_click", json!({ "on": true })).is_ok());
+        // An empty list checks the argument names without opening an audio device.
+        assert!(call(&w, "play_notes", json!({ "notes": [], "preset": "keys" })).is_ok());
+        assert!(call(&w, "stop_notes", json!({})).is_ok());
+        assert!(call(&w, "stop_sequence", json!({})).is_ok());
+        // A Lab progression as a MIDI clip in Music/Saga/Renders; dragging it twice reuses the file.
+        let midi = json!({
+            "notes": [{ "note": 57, "start": 0, "length": 3.9, "velocity": 0.7 }, { "note": 60, "start": 4, "length": 3.9 }],
+            "beats": 8, "bpm": 124, "name": "Night drive", "label": "124 BPM, A min"
+        });
+        let path = call(&w, "save_midi", midi.clone()).unwrap();
+        let path = path.as_str().unwrap();
+        assert!(path.ends_with("Night drive (124 BPM, A min).mid"), "{path}");
+        assert_eq!(&std::fs::read(path).unwrap()[..4], b"MThd");
+        assert_eq!(call(&w, "save_midi", midi).unwrap(), json!(path));
         assert!(call(&w, "index_progress", json!({})).unwrap()["refreshing"].is_boolean());
         for (cmd, body) in [
             ("seek", json!({ "position": 1.5 })),
