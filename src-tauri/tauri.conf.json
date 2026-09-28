@@ -39,6 +39,20 @@
       "icons/icon.icns",
       "icons/icon.ico",
       "icons/Source/Saga.icon"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "Entitlements.plist"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzMTQ5OUY2OEQzRTgzMEYKUldRUGd6Nk45cGtVWTFZL1piSUgxcVEwV1ZlTUF0QUR6bk1nenh0YU5pWmttdXFJeHFHODlBaCsK",
+      "endpoints": [
+        "https://github.com/Falciighol/saga/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

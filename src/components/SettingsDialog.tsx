@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { FolderPlus, HardDrive, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
@@ -8,6 +9,7 @@ import { SCALES } from "../lib/scale";
 import { ACCENT_ORDER, ACCENTS, type ThemePref } from "../lib/theme";
 import { useLibrary } from "../store/library";
 import { usePrefs } from "../store/prefs";
+import { useUpdates, type UpdateStatus } from "../store/updates";
 import { chooseFolders } from "./Sidebar";
 import { InstalledFontPicker, type FontList } from "./InstalledFontPicker";
 import { cx, IconButton, Kbd, SectionLabel, Segmented, Switch } from "./ui";
@@ -66,6 +68,60 @@ function FontChoices<T extends string>({
         );
       })}
     </div>
+  );
+}
+
+function updateHint(status: UpdateStatus, version: string | null, progress: number | null): string | undefined {
+  switch (status) {
+    case "checking":
+      return "Checking for updates…";
+    case "current":
+      return "You're on the latest version.";
+    case "downloading":
+      return `Downloading Saga ${version}…${progress != null ? ` ${Math.round(progress * 100)}%` : ""}`;
+    case "ready":
+      return `Saga ${version} is ready. Restart to start using it.`;
+    case "installing":
+      return "Restarting…";
+    case "error":
+      return "Couldn't check for updates. Check your connection and try again.";
+    default:
+      return undefined;
+  }
+}
+
+function UpdatesSection() {
+  const autoUpdate = usePrefs((s) => s.autoUpdate);
+  const { status, version, progress, error } = useUpdates();
+  const [current, setCurrent] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion().then(setCurrent).catch(() => {});
+  }, []);
+
+  const ready = status === "ready" || status === "installing";
+  const busy = status === "checking" || status === "downloading" || status === "installing";
+  return (
+    <section>
+      <SectionLabel className="pb-1">Updates</SectionLabel>
+      <Row label={current ? `Saga ${current}` : "Saga"} hint={updateHint(status, version, progress)}>
+        <button
+          type="button"
+          title={status === "error" && error ? error : undefined}
+          disabled={busy}
+          onClick={() => void (ready ? useUpdates.getState().restart() : useUpdates.getState().check())}
+          className={cx(
+            "h-8 shrink-0 rounded-lg px-3 text-ui disabled:opacity-50",
+            ready ? "bg-accent font-semibold text-on-accent" : "border border-line2 bg-raised text-text hover:bg-raised2",
+          )}
+        >
+          {ready ? "Restart to update" : "Check for updates"}
+        </button>
+      </Row>
+      <Row label="Check automatically" hint="Looks for a new version when Saga opens and downloads it in the background. Nothing installs until you restart.">
+        <Switch checked={autoUpdate} onChange={(v) => usePrefs.getState().set({ autoUpdate: v })} />
+      </Row>
+    </section>
   );
 }
 
@@ -253,6 +309,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </div>
             <p className="mt-2 text-small text-text3">Removing a folder only removes it from Saga. Your files are never moved or changed.</p>
           </section>
+
+          <UpdatesSection />
 
           <section>
             <SectionLabel className="pb-2">Keyboard</SectionLabel>

@@ -11,6 +11,8 @@
     "core:window:allow-close",
     "dialog:default",
     "opener:default",
-    "drag:default"
+    "drag:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

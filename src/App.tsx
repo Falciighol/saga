@@ -5,7 +5,7 @@ import { Editor } from "./components/Editor";
 import { LabView } from "./components/lab/LabView";
 import { onTransport } from "./store/lab";
 import { MiniPlayer } from "./components/MiniPlayer";
-import { DropTarget, Toasts } from "./components/Overlays";
+import { DropTarget, Toasts, UpdateNotice } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { PromptHost } from "./components/Prompt";
 import { ListHeader, SampleList } from "./components/SampleList";
@@ -27,6 +27,7 @@ import { startParamsSync, usePlayer } from "./store/player";
 import { usePrefs } from "./store/prefs";
 import { useSimilar } from "./store/similar";
 import { useUi } from "./store/ui";
+import { startUpdateChecks } from "./store/updates";
 
 export default function App() {
   useThemeSync();
@@ -47,6 +48,7 @@ export default function App() {
     void api.setVolume(usePrefs.getState().volume);
     startBrowsing();
     const stopParamsSync = startParamsSync();
+    const stopUpdateChecks = startUpdateChecks();
 
     const subs = [
       events.onProgress((p) => useLibrary.getState().setProgress(p)),
@@ -69,6 +71,7 @@ export default function App() {
       subs.forEach((p) => void p.then((unlisten) => unlisten()));
       window.removeEventListener("contextmenu", noMenu);
       stopParamsSync();
+      stopUpdateChecks();
     };
   }, []);
 
@@ -77,6 +80,7 @@ export default function App() {
       <MenuHost />
       <PromptHost />
       <Toasts />
+      <UpdateNotice />
       <DropTarget />
       {settings && <SettingsDialog onClose={() => setSettings(false)} />}
     </>

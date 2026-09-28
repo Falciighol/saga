@@ -1,5 +1,5 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { addToCollection, useDragState } from "../lib/actions";
 import { api } from "../lib/api";
@@ -7,6 +7,7 @@ import { pixelRatio } from "../lib/scale";
 import { useLibrary } from "../store/library";
 import { useSimilar } from "../store/similar";
 import { useToasts } from "../store/toasts";
+import { useUpdates } from "../store/updates";
 import { cx } from "./ui";
 
 export function Toasts() {
@@ -28,6 +29,39 @@ export function Toasts() {
           </button>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Offers a downloaded update. Nothing restarts until asked, so a session next to the DAW isn't cut short. */
+export function UpdateNotice() {
+  const { status, version, dismissed, restart, dismiss } = useUpdates();
+  if (dismissed || (status !== "ready" && status !== "installing")) return null;
+  return (
+    <div
+      role="status"
+      className="animate-pop fixed top-16 right-4 z-40 flex w-[300px] items-start gap-3 rounded-xl border border-line2 bg-panel p-3.5 shadow-pop"
+    >
+      <Download size={16} className="mt-0.5 shrink-0 text-accent" />
+      <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-body font-semibold">Saga {version} is ready</span>
+          <span className="text-small text-text3">Restart to start using it. Your library and settings stay as they are.</span>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={dismiss} disabled={status === "installing"} className="h-7 rounded-lg px-2.5 text-ui text-text2 hover:bg-raised disabled:opacity-40">
+            Later
+          </button>
+          <button
+            type="button"
+            onClick={() => void restart()}
+            disabled={status === "installing"}
+            className="h-7 rounded-lg bg-accent px-3 text-ui font-semibold text-on-accent disabled:opacity-60"
+          >
+            {status === "installing" ? "Restarting…" : "Restart"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

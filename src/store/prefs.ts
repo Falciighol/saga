@@ -32,6 +32,8 @@ export interface PrefValues {
   similarAspect: Aspect;
   /** Keep the mini player above other windows. */
   miniOnTop: boolean;
+  /** Look for new versions on launch and download them in the background. */
+  autoUpdate: boolean;
 }
 
 interface Prefs extends PrefValues {
@@ -56,6 +58,7 @@ export const usePrefs = create<Prefs>()(
       mapArrange: "timbre",
       similarAspect: "overall",
       miniOnTop: true,
+      autoUpdate: true,
       set: (patch) => set(patch),
     }),
     {

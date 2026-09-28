@@ -761,6 +761,11 @@ export function installMockBackend() {
           return "/tmp/drag.png";
         case "suggested_folders":
           return [];
+        case "plugin:app|version":
+          return "0.1.0";
+        case "plugin:updater|check":
+          // null: no update. Return { rid: 1, currentVersion: "0.1.0", version: "0.2.0", rawJson: {} } to see the flow.
+          return null;
         default:
           return null;
       }
