@@ -1,5 +1,6 @@
 // Builds the notarized macOS release on this Mac and adds it to the version's draft GitHub
-// release, next to the Windows build from CI (.github/workflows/release.yml).
+// release (opened by .github/workflows/release.yml), next to the Windows build from
+// `npm run release:windows`.
 //   npm run release:mac
 //
 // One universal app (Apple Silicon and Intel), signed with the Developer ID Application
@@ -110,7 +111,7 @@ copyFileSync(archive, join(staging, archiveName));
 copyFileSync(`${archive}.sig`, join(staging, `${archiveName}.sig`));
 const signature = readFileSync(`${archive}.sig`, "utf8").trim();
 
-// The Windows build rewrites latest.json at the end of its run; don't race it.
+// The workflow opens the draft; don't race it into opening a second one.
 step("Waiting for any running Release workflow");
 for (;;) {
   const running = ["in_progress", "queued"].flatMap((status) =>
@@ -126,7 +127,7 @@ const release = run("gh", ["api", `repos/${repo}/releases`, "--paginate", "--jq"
 if (release === "false") fail(`${tag} is already published. Bump the version with npm run set-version -- <x.y.z>.`);
 if (!release) {
   run("gh", ["release", "create", tag, "-R", repo, "--draft", "--target", sha, "--title", `Saga ${version}`, "--notes", notes]);
-  console.log("  opened the draft; the Release workflow adds Windows to it");
+  console.log("  opened the draft; add the Windows build with npm run release:windows");
 }
 run("gh", ["release", "upload", tag, "-R", repo, "--clobber", dmg, join(staging, archiveName), join(staging, `${archiveName}.sig`)], { inherit: true });
 

@@ -15,7 +15,8 @@
     "tauri:dev": "node scripts/tauri.mjs dev",
     "tauri:build": "node scripts/tauri.mjs build",
     "set-version": "node scripts/version.mjs",
-    "release:mac": "node scripts/release-mac.mjs"
+    "release:mac": "node scripts/release-mac.mjs",
+    "release:windows": "node scripts/release-windows.mjs"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",

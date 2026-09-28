@@ -109,35 +109,41 @@ To ship a version:
 ```bash
 npm run set-version -- 0.2.0
 git commit -am "Saga 0.2.0" && git tag v0.2.0 && git push --follow-tags
-npm run release:mac
+npm run release:mac       # on the Mac
+npm run release:windows   # on the Windows PC
 ```
 
 1. `npm run set-version` writes the version to `package.json`, `tauri.conf.json`, `Cargo.toml`
    and `Cargo.lock`.
 2. The pushed tag starts `.github/workflows/release.yml` (it can also be run from the Actions
-   tab). It opens a **draft** release and builds Windows (NSIS) into it, with a signed update
-   bundle and `latest.json`.
+   tab). It only opens the **draft** release; nothing is built in CI.
 3. `npm run release:mac` builds the Mac version on your Mac: one universal app for Apple Silicon
    and Intel, signed with your Developer ID and notarized by Apple (notarizing in CI would use up
    the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the
-   signed update bundle to the same draft, and adds the Mac entries to `latest.json`. You can run
-   it while CI is still building: it waits for the workflow to finish before touching
-   `latest.json`, and either side keeps the other's entries.
-4. Check the draft has the .dmg, the Windows setup .exe and a `latest.json` listing
+   signed update bundle to the draft, and adds the Mac entries to `latest.json`. It waits for the
+   workflow to finish first, so the draft isn't opened twice.
+4. `npm run release:windows` builds the NSIS installer on the PC (not code-signed, so Windows
+   shows an "unknown publisher" warning) and leaves three files in `release-windows/`: the
+   `-setup.exe`, its `.sig`, and a `latest.json` with a `windows-x86_64` entry. It uploads nothing;
+   drag them onto the draft yourself. If `gh` is signed in and the draft already has a
+   `latest.json`, the script merges into it, so replace the draft's copy with the new one. If it
+   can't (it says so), don't overwrite a `latest.json` that already has the Mac entries; upload
+   Windows first and run `release:mac` after, or fix `gh` and run it again.
+5. Check the draft has the .dmg, the Windows setup .exe and a `latest.json` listing
    `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish it. That's the moment
    installed copies see the update.
 
-`release:mac` insists on a clean working tree and a pushed commit, so the build always matches
+Both scripts insist on a clean working tree and a pushed commit, so the builds always match
 what's tagged.
 
 ### One-time setup
 
-On GitHub, one repository secret (Settings › Secrets and variables › Actions):
+CI needs no secrets. The updater's private key (`~/.tauri/saga_updater.key`) lives only on the
+machines that build; keep a backup, because losing it means installed copies can't update.
 
-| Secret | What |
-| --- | --- |
-| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/saga_updater.key`, the updater's private key. Keep a backup: losing it means installed copies can't update |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Its password, if it has one |
+On the PC that makes Windows releases: Node, Rust, git, and the updater key copied from the Mac
+to `%USERPROFILE%\.tauri\saga_updater.key` (or `TAURI_SIGNING_PRIVATE_KEY` set to its path or
+contents). `gh` is optional there.
 
 On the Mac that makes releases:
 

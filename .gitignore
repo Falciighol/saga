@@ -5,3 +5,4 @@ src-tauri/gen/schemas
 .DS_Store
 .env
 *.log
+release-windows

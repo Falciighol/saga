@@ -1,6 +1,7 @@
-# Builds Saga for Windows, signs the update bundle and drafts a GitHub release with the installer
-# and latest.json. The notarized Mac build is made on a Mac with `npm run release:mac`, which adds
-# it to the same draft (notarizing in CI costs too many macOS runner minutes).
+# Opens the draft GitHub release for the app's version. Nothing is built here: the Mac build is made
+# on a Mac with `npm run release:mac` and the Windows build on a PC with `npm run release:windows`
+# (notarizing in CI costs too many macOS runner minutes; Windows isn't code-signed, so there's little
+# for CI to add). Each of them puts its installer on the draft.
 #
 # Publishing the draft is what ships the update: installed copies read
 # https://github.com/Falciighol/saga/releases/latest/download/latest.json, and drafts never count
@@ -22,14 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      id: ${{ steps.draft.outputs.id }}
     steps:
       - uses: actions/checkout@v4
       - name: Versions agree
         run: node scripts/version.mjs --check
-      - id: draft
-        name: Draft release
+      - name: Draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -48,51 +46,4 @@ jobs:
           if [[ -z "$id" ]]; then
             gh release create "$tag" --draft --target "$GITHUB_SHA" --title "Saga $version" \
               --notes "Download the installer for your computer below. If Saga is already installed, it will offer this update on its own."
-            read -r id draft <<< "$(find | head -1)"
           fi
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-
-  windows:
-    needs: release
-    permissions:
-      contents: write
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Updater key is set
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
-            echo "::error::Repository secret TAURI_SIGNING_PRIVATE_KEY is not set"
-            exit 1
-          fi
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
-      - run: npm ci
-
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the update bundle; the app checks it against the pubkey in tauri.conf.json.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          releaseId: ${{ needs.release.outputs.id }}
-          # It adds windows-x86_64 to latest.json and keeps the platforms already there (the Mac's).
-          updaterJsonPreferNsis: true
-          # createUpdaterArtifacts lives in this file so local `npm run tauri:build` works without the private key.
-          # One Windows installer (NSIS), so updates never leave an MSI and an NSIS copy side by side.
-          args: --config src-tauri/tauri.release.conf.json --bundles nsis
