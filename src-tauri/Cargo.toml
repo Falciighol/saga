@@ -1,6 +1,6 @@
 [package]
 name = "saga"
-version = "0.1.0"
+version = "1.0.0"
 description = "A fast, smart sample browser for music producers"
 authors = ["falcighol"]
 edition = "2021"
