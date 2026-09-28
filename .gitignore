@@ -6,3 +6,4 @@ src-tauri/gen/schemas
 .env
 *.log
 release-windows
+release-mac

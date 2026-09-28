@@ -92,6 +92,7 @@ if (fetched) {
   console.log(`  latest.json was merged with the draft's, and covers ${platforms.join(", ")}. Replace the draft's copy with this one.`);
 } else {
   console.log(`  latest.json covers only ${platforms.join(", ")}: it couldn't be merged with the draft's (gh missing, signed out, or no latest.json there yet).`);
-  console.log("  If the draft already has the Mac's latest.json, don't replace it with this one; run this script again once gh works.");
-  console.log("  Otherwise upload this one, then run npm run release:mac, which adds the Mac entries to it.");
+  console.log("  If the draft has no latest.json yet, upload this one (release:mac adds the Mac entries to it later).");
+  console.log(`  If it has one (from the Mac build), don't replace it: download it, copy the "${platform}" entry under "platforms" from`);
+  console.log(`  ${join(out, "latest.json")} into it, and upload the result over the draft's copy.`);
 }

@@ -3,6 +3,9 @@
 // `npm run release:windows`.
 //   npm run release:mac
 //
+// The files to upload are also collected in release-mac/. If gh fails at any point, the script says
+// what is still missing on the draft so you can finish by hand.
+//
 // One universal app (Apple Silicon and Intel), signed with the Developer ID Application
 // certificate in your login keychain and notarized by Apple. Uploads the .dmg and the signed
 // update bundle, then adds darwin-aarch64 and darwin-x86_64 to the release's latest.json.
@@ -14,9 +17,9 @@
 //       security add-generic-password -s saga-notarize -a you@example.com -w
 //     (it asks for the password; the team ID comes from the certificate)
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -54,7 +57,7 @@ if (!run("git", ["branch", "-r", "--contains", sha])) fail("Push this commit fir
 const remote = run("git", ["remote", "get-url", "origin"]);
 const repo = remote.match(/github\.com[:/](.+?)(?:\.git)?$/)?.[1] ?? fail(`origin isn't a GitHub repository: ${remote}`);
 if (run("gh", ["api", `repos/${repo}`, "--jq", ".full_name"], { allowFail: true }) == null) {
-  fail(`gh can't reach ${repo}. Sign in with an account that can (gh auth switch).`);
+  console.log(`  warning: gh can't reach ${repo} (gh auth switch?). The build goes ahead; you'll get a list of what to upload by hand.`);
 }
 if (!existsSync(updaterKey)) fail(`The updater key isn't at ${updaterKey}.`);
 
@@ -104,43 +107,115 @@ if (gatekeeper.status !== 0 || !/Notarized Developer ID/.test(gatekeeper.stderr)
 run("xcrun", ["stapler", "validate", app]);
 console.log("  accepted: notarized Developer ID, ticket stapled");
 
+// Everything to upload is collected in release-mac/ before gh is touched, so a gh failure never costs
+// the build: whatever gh couldn't do is listed at the end for you to finish by hand.
 // Both architectures update from the one universal bundle.
-const staging = mkdtempSync(join(tmpdir(), "saga-release-"));
+const out = join(root, "release-mac");
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out);
 const archiveName = "Saga_universal.app.tar.gz";
-copyFileSync(archive, join(staging, archiveName));
-copyFileSync(`${archive}.sig`, join(staging, `${archiveName}.sig`));
+const dmgName = basename(dmg);
+copyFileSync(dmg, join(out, dmgName));
+copyFileSync(archive, join(out, archiveName));
+copyFileSync(`${archive}.sig`, join(out, `${archiveName}.sig`));
 const signature = readFileSync(`${archive}.sig`, "utf8").trim();
+const assets = [dmgName, archiveName, `${archiveName}.sig`];
+
+/** Runs gh without stopping the script; null means it failed. */
+const gh = (args, opts = {}) => run("gh", args, { allowFail: true, ...opts });
 
 // The workflow opens the draft; don't race it into opening a second one.
 step("Waiting for any running Release workflow");
 for (;;) {
-  const running = ["in_progress", "queued"].flatMap((status) =>
-    JSON.parse(run("gh", ["run", "list", "-R", repo, "--workflow", "release.yml", "--status", status, "--json", "databaseId"]) || "[]"),
+  const running = ["in_progress", "queued"].map((status) =>
+    gh(["run", "list", "-R", repo, "--workflow", "release.yml", "--status", status, "--json", "databaseId"]),
   );
-  if (!running.length) break;
-  console.log(`  ${running.length} running; checking again in 30 s`);
+  if (running.includes(null)) {
+    console.log("  couldn't ask gh about it; carrying on");
+    break;
+  }
+  const count = running.reduce((n, json) => n + JSON.parse(json || "[]").length, 0);
+  if (!count) break;
+  console.log(`  ${count} running; checking again in 30 s`);
   spawnSync("sleep", ["30"]);
 }
 
-step(`Adding the Mac build to the ${tag} draft`);
-const release = run("gh", ["api", `repos/${repo}/releases`, "--paginate", "--jq", `.[] | select(.tag_name == "${tag}") | .draft`]).split("\n")[0];
-if (release === "false") fail(`${tag} is already published. Bump the version with npm run set-version -- <x.y.z>.`);
-if (!release) {
-  run("gh", ["release", "create", tag, "-R", repo, "--draft", "--target", sha, "--title", `Saga ${version}`, "--notes", notes]);
-  console.log("  opened the draft; add the Windows build with npm run release:windows");
-}
-run("gh", ["release", "upload", tag, "-R", repo, "--clobber", dmg, join(staging, archiveName), join(staging, `${archiveName}.sig`)], { inherit: true });
+// What is left for you to do by hand.
+const todo = { publishedAlready: false, draft: false, uploads: false, latest: "" };
 
-const latestPath = join(staging, "latest.json");
-const downloaded = run("gh", ["release", "download", tag, "-R", repo, "-p", "latest.json", "-D", staging], { allowFail: true }) != null;
-const latest = downloaded && existsSync(latestPath)
-  ? JSON.parse(readFileSync(latestPath, "utf8"))
-  : { version, notes: "", pub_date: new Date().toISOString(), platforms: {} };
+step(`Adding the Mac build to the ${tag} draft`);
+const found = gh(["api", `repos/${repo}/releases`, "--paginate", "--jq", `.[] | select(.tag_name == "${tag}") | (.id | tostring) + " " + (.draft | tostring)`]);
+const [releaseId, isDraft] = (found ?? "").split("\n")[0].split(" ");
+let existing = null; // asset names already on the draft, once known
+if (found == null) {
+  console.log("  gh couldn't list the releases");
+  Object.assign(todo, { draft: true, uploads: true, latest: "unmerged" });
+} else if (releaseId && isDraft !== "true") {
+  fail(`${tag} is already published. Bump the version with npm run set-version -- <x.y.z>. The build is in ${out}.`);
+} else {
+  if (!releaseId) {
+    if (gh(["release", "create", tag, "-R", repo, "--draft", "--target", sha, "--title", `Saga ${version}`, "--notes", notes]) == null) {
+      console.log("  gh couldn't open the draft");
+      Object.assign(todo, { draft: true, uploads: true, latest: "unmerged" });
+    } else {
+      console.log("  opened the draft; add the Windows build with npm run release:windows");
+      existing = [];
+    }
+  } else {
+    existing = gh(["api", `repos/${repo}/releases/${releaseId}`, "--jq", ".assets[].name"])?.split("\n").filter(Boolean) ?? null;
+  }
+}
+
+if (!todo.uploads) {
+  if (gh(["release", "upload", tag, "-R", repo, "--clobber", ...assets.map((f) => join(out, f))], { inherit: true }) == null) {
+    console.log("  gh couldn't upload the installer");
+    todo.uploads = true;
+  }
+}
+
+// latest.json: start from the draft's (it may hold Windows) so its entries carry over.
+let latest = { version, notes: "", pub_date: new Date().toISOString(), platforms: {} };
+if (!todo.latest) {
+  if (existing?.includes("latest.json")) {
+    const staging = mkdtempSync(join(tmpdir(), "saga-release-"));
+    const fetched = gh(["release", "download", tag, "-R", repo, "-p", "latest.json", "-D", staging]) != null;
+    if (fetched) latest = JSON.parse(readFileSync(join(staging, "latest.json"), "utf8"));
+    else todo.latest = "unmerged";
+    rmSync(staging, { recursive: true, force: true });
+  } else if (existing == null) {
+    todo.latest = "unmerged"; // couldn't tell whether the draft has one
+  }
+}
 latest.version = version;
 const url = `https://github.com/${repo}/releases/download/${tag}/${archiveName}`;
 for (const platform of ["darwin-aarch64", "darwin-x86_64"]) latest.platforms[platform] = { signature, url };
+const latestPath = join(out, "latest.json");
 writeFileSync(latestPath, `${JSON.stringify(latest, null, 2)}\n`);
-run("gh", ["release", "upload", tag, "-R", repo, "--clobber", latestPath], { inherit: true });
+if (!todo.latest) {
+  if (gh(["release", "upload", tag, "-R", repo, "--clobber", latestPath], { inherit: true }) == null) {
+    console.log("  gh couldn't upload latest.json");
+    todo.latest = "merged";
+  }
+}
 
-console.log(`\n✓ Saga ${version} for Mac is on the ${tag} draft. latest.json covers ${Object.keys(latest.platforms).join(", ")}.`);
-console.log(`  Check the draft, then publish it: https://github.com/${repo}/releases`);
+const releasesUrl = `https://github.com/${repo}/releases`;
+if (!todo.draft && !todo.uploads && !todo.latest) {
+  console.log(`\n✓ Saga ${version} for Mac is on the ${tag} draft. latest.json covers ${Object.keys(latest.platforms).join(", ")}.`);
+  console.log(`  Check the draft, then publish it: ${releasesUrl}`);
+} else {
+  process.exitCode = 1;
+  console.log(`\n! The build is done and its files are in ${out}, but gh couldn't finish. Still to do by hand at ${releasesUrl}:`);
+  let n = 0;
+  if (todo.draft) {
+    console.log(`  ${++n}. Open a draft release for the tag ${tag} (target commit ${sha.slice(0, 7)}), titled "Saga ${version}", if there isn't one yet.`);
+  }
+  if (todo.uploads) console.log(`  ${++n}. Upload ${assets.join(", ")} from ${out} to the draft.`);
+  if (todo.latest === "merged") {
+    console.log(`  ${++n}. Upload ${latestPath} to the draft, replacing its latest.json. It is already merged with the draft's.`);
+  } else if (todo.latest === "unmerged") {
+    console.log(`  ${++n}. latest.json: if the draft has none, upload ${latestPath}. If it has one (from the Windows build), edit that one instead:`);
+    console.log(`     download it, copy the darwin-aarch64 and darwin-x86_64 entries under "platforms" from ${latestPath} into it,`);
+    console.log("     and upload the result over the draft's copy. Its \"version\" must be " + `"${version}".`);
+  }
+  console.log(`  ${++n}. Check the draft lists the .dmg, the Windows setup .exe and a latest.json with darwin-aarch64, darwin-x86_64 and windows-x86_64, then publish it.`);
+}

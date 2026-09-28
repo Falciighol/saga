@@ -133,6 +133,11 @@ npm run release:windows   # on the Windows PC
    `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish it. That's the moment
    installed copies see the update.
 
+If `gh` fails partway (signed out, network, rate limit), `release:mac` still finishes the build,
+keeps the files in `release-mac/` and ends by listing what's left to do by hand on the draft: open
+it, upload the files, and add its entries to `latest.json`. `release:windows` never uploads, so it
+only needs `gh` to merge `latest.json`; without it, it explains how to merge by hand.
+
 Both scripts insist on a clean working tree and a pushed commit, so the builds always match
 what's tagged.
 
