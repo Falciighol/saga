@@ -187,6 +187,14 @@ npm run tauri:dev
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for prerequisites, tests, the code layout and how
 releases are made. Saga is built with [Tauri 2](https://tauri.app) (Rust) and React.
 
+## License
+
+Saga is free to use, including for music you release or sell, but it may not be redistributed or
+sold. You can read the source, build it and modify it for your own use. See [LICENSE](LICENSE).
+
+If Saga earns a place in your workflow, you can [support its development](https://falcighol.gumroad.com).
+Donations are voluntary and don't change what the license gives you.
+
 ## Roadmap
 
 Next up: **Ableton Link**, so the project tempo follows your DAW.

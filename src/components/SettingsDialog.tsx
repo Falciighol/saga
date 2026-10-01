@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { FolderPlus, HardDrive, RefreshCw, Trash2, X } from "lucide-react";
+import { FolderPlus, HardDrive, Heart, RefreshCw, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { openLink } from "../lib/actions";
 import { api } from "../lib/api";
 import { MONO_FONTS, MONO_ORDER, SANS_FONTS, SANS_ORDER } from "../lib/fonts";
 import { fmtCount } from "../lib/format";
@@ -120,6 +121,35 @@ function UpdatesSection() {
       </Row>
       <Row label="Check automatically" hint="Looks for a new version when Saga opens and downloads it in the background. Nothing installs until you restart.">
         <Switch checked={autoUpdate} onChange={(v) => usePrefs.getState().set({ autoUpdate: v })} />
+      </Row>
+    </section>
+  );
+}
+
+const DONATE = [
+  { label: "Gumroad", url: "https://falcighol.gumroad.com/l/qihzlk" },
+  { label: "PayPal", url: "https://www.paypal.com/donate/?hosted_button_id=L5TFM8QRVZY7Y" },
+];
+
+function SupportSection() {
+  return (
+    <section>
+      <SectionLabel className="pb-1">Support Saga</SectionLabel>
+      <Row label="Saga is free" hint="If it's earned a place in your workflow, a donation helps keep it going.">
+        <div className="flex shrink-0 gap-2">
+          {DONATE.map((d) => (
+            <button
+              key={d.label}
+              type="button"
+              title={d.url}
+              aria-label={`Donate with ${d.label}`}
+              onClick={() => void openLink(d.url)}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-line2 bg-raised px-3 text-ui text-text hover:bg-raised2"
+            >
+              <Heart size={13} className="text-accent" /> {d.label}
+            </button>
+          ))}
+        </div>
       </Row>
     </section>
   );
@@ -311,6 +341,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </section>
 
           <UpdatesSection />
+
+          <SupportSection />
 
           <section>
             <SectionLabel className="pb-2">Keyboard</SectionLabel>

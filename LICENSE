@@ -1,0 +1,70 @@
+Saga License
+
+Copyright (c) 2026 Falcighol. All rights reserved, except as granted below.
+
+Saga is free to use. It is not free to redistribute. This license applies to the Saga
+application, its source code, and its documentation and artwork (together, "Saga").
+
+1. What you may do
+
+   You may, at no charge:
+
+   a. Download, install and use Saga on any computer you own or control, for any purpose,
+      including making music you release or sell commercially.
+   b. Read the source code, and build Saga from it for your own use.
+   c. Modify the source code for your own use, including to fix bugs or try ideas.
+   d. Make backup copies for your own use.
+   e. Fork the repository on GitHub, to the extent GitHub's Terms of Service allow, and send
+      the licensor your changes. By sending a change you grant the licensor the right to use
+      it in Saga under any license, including this one.
+
+2. What you may not do
+
+   Without the licensor's prior written permission, you may not:
+
+   a. Redistribute Saga, or any part of it, in original or modified form, in source or binary
+      form. This includes uploading it to a website, file-sharing service, app store, package
+      manager or mirror, bundling it with other software, or giving copies to other people.
+   b. Sell, rent, lease, sublicense or otherwise charge for Saga, or offer it as part of a paid
+      product or service.
+   c. Publish modified versions, or software derived from Saga's source code.
+   d. Remove or alter this license or any copyright notice.
+   e. Use the Saga name, logo or artwork to suggest your software is Saga or is endorsed by
+      the licensor.
+
+   You may link to Saga's official download pages. Sharing a link is not redistribution.
+   Anyone who wants Saga should get it from the licensor's official pages.
+
+3. Donations
+
+   Saga is free. Donations are welcome and voluntary. A donation, or any amount paid
+   to the licensor through the official download pages, supports development. It does not buy
+   a different license, additional rights, ownership, or any support, feature or update
+   commitment. Every user has the rights in section 1, and only those.
+
+4. Third-party software
+
+   Saga includes and depends on third-party software, each under its own license. Those
+   licenses apply to those components, not this license, and nothing here limits the rights
+   they grant you.
+
+5. Ownership
+
+   Saga is licensed, not sold. The licensor keeps all rights not expressly granted here.
+
+6. No warranty
+
+   SAGA IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING THE
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. YOU USE
+   IT AT YOUR OWN RISK. THE LICENSOR HAS NO OBLIGATION TO PROVIDE SUPPORT, FIXES OR UPDATES.
+
+7. Limitation of liability
+
+   TO THE FULLEST EXTENT PERMITTED BY LAW, THE LICENSOR IS NOT LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY, WHETHER IN CONTRACT, TORT OR OTHERWISE, ARISING FROM OR IN CONNECTION WITH
+   SAGA OR ITS USE, INCLUDING LOST DATA OR LOST PROFITS.
+
+8. Termination
+
+   This license ends automatically if you break its terms. When it ends, you must stop using
+   Saga and delete all copies you hold. Sections 4 to 8 survive termination.

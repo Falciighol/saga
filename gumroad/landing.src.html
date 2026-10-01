@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+<head>
+<style>
+  :root {
+    --bg: #0f1012;
+    --panel: #15161a;
+    --raised: #1b1d21;
+    --line: #24272c;
+    --line2: #33373e;
+    --text: #eceae6;
+    --text2: #a6a9af;
+    --text3: #868a91;
+    --accent: #9d8cff;
+    --accent-ink: #b7aaff;
+    --accent-soft: rgba(157, 140, 255, 0.14);
+    --on-accent: #120f22;
+    --glow: rgba(157, 140, 255, 0.35);
+    --danger: #ff8f8f;
+    --shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--line);
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f5f2;
+      --panel: #ffffff;
+      --raised: #efeee9;
+      --line: #e2e0da;
+      --line2: #d0cdc5;
+      --text: #17181b;
+      --text2: #4c4f56;
+      --text3: #686b72;
+      --accent: #5b4bd6;
+      --accent-ink: #4a3bc2;
+      --accent-soft: rgba(91, 75, 214, 0.10);
+      --on-accent: #ffffff;
+      --glow: rgba(91, 75, 214, 0.22);
+      --danger: #b42318;
+      --shadow: 0 30px 70px -35px rgba(30, 25, 70, 0.35), 0 0 0 1px var(--line);
+      color-scheme: light;
+    }
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { display: block; max-width: 100%; height: auto; }
+  a { color: var(--accent-ink); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+  .wrap { width: 100%; max-width: 1160px; margin: 0 auto; padding: 0 20px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .skip { position: absolute; left: 12px; top: -60px; z-index: 100; background: var(--accent); color: var(--on-accent); padding: 10px 14px; border-radius: 8px; font-weight: 600; text-decoration: none; }
+  .skip:focus { top: 12px; }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    min-height: 48px; padding: 0 22px; border-radius: 12px; border: 0;
+    font: 600 16px/1 var(--sans); text-decoration: none; cursor: pointer;
+    transition: transform .15s ease, box-shadow .2s ease, background .2s ease;
+  }
+  .btn-primary { background: var(--accent); color: var(--on-accent); box-shadow: 0 10px 30px -10px var(--glow); }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 16px 40px -12px var(--glow); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line2); }
+  .btn-ghost:hover { background: var(--raised); }
+  .btn-sm { min-height: 38px; padding: 0 14px; font-size: 14px; border-radius: 10px; }
+  .btn svg { width: 18px; height: 18px; flex: none; }
+
+  /* ---------- Nav ---------- */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    -webkit-backdrop-filter: saturate(150%) blur(14px); backdrop-filter: saturate(150%) blur(14px);
+    border-bottom: 1px solid transparent; transition: border-color .2s ease;
+  }
+  .nav.scrolled { border-bottom-color: var(--line); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; color: var(--text); text-decoration: none; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--text); color: var(--bg); display: grid; place-items: center; }
+  .logo svg { width: 24px; height: 24px; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a.txt { color: var(--text2); text-decoration: none; font-size: 15px; }
+  .nav-links a.txt:hover { color: var(--text); }
+  @media (max-width: 720px) { .nav-links a.txt { display: none; } }
+
+  /* ---------- Hero ---------- */
+  .hero { position: relative; padding: 72px 0 40px; text-align: center; isolation: isolate; }
+  .hero::before {
+    content: ""; position: absolute; inset: -10% 0 auto; height: 620px; z-index: -1;
+    background: radial-gradient(60% 55% at 50% 30%, var(--accent-soft), transparent 70%);
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent-ink); font: 600 13px/1.2 var(--sans); letter-spacing: .02em;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  h1 {
+    margin: 22px auto 0; max-width: 15ch;
+    font-size: clamp(40px, 7vw, 76px); line-height: 1.02; letter-spacing: -0.035em; font-weight: 750;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { margin: 22px auto 0; max-width: 640px; color: var(--text2); font-size: clamp(17px, 2.1vw, 20px); }
+  .hero-cta { margin-top: 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
+  .hero-meta { margin-top: 18px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 20px; color: var(--text3); font-size: 14px; }
+  .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
+  .hero-meta svg { width: 16px; height: 16px; color: var(--accent); }
+
+  /* waveform motif (echoes the Saga logo bars) */
+  .wave { display: flex; align-items: center; justify-content: center; gap: 6px; height: 46px; margin: 44px auto 0; }
+  .wave i { display: block; width: 6px; border-radius: 6px; background: var(--accent); opacity: .85; height: 30%; animation: bar 1.6s ease-in-out infinite; }
+  .wave i:nth-child(2n) { animation-duration: 1.9s; }
+  .wave i:nth-child(3n) { animation-duration: 1.3s; opacity: .55; }
+  @keyframes bar { 0%, 100% { height: 22%; } 50% { height: 100%; } }
+
+  .shot {
+    position: relative; margin: 26px auto 0; max-width: 1080px; border-radius: 16px; overflow: hidden;
+    background: var(--panel); box-shadow: var(--shadow);
+  }
+  .shot img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; }
+  .hero .shot { transform: perspective(1600px) rotateX(var(--tilt, 8deg)); transform-origin: 50% 0; transition: transform .1s linear; }
+  .img-light { display: none; }
+  @media (prefers-color-scheme: light) { .img-dark { display: none; } .img-light { display: block; } }
+  .caption { margin: 14px auto 0; max-width: 760px; color: var(--text3); font-size: 14px; text-align: center; }
+
+  /* ---------- Sections ---------- */
+  section { padding: 96px 0; }
+  section[id], .hero { scroll-margin-top: 64px; }
+  .kicker { font: 600 13px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+  h2 { margin: 14px 0 0; font-size: clamp(30px, 4.4vw, 48px); line-height: 1.08; letter-spacing: -0.03em; font-weight: 720; }
+  .sec-head { max-width: 720px; }
+  .sec-head.center { margin: 0 auto; text-align: center; }
+  .sec-head p { color: var(--text2); margin: 16px 0 0; font-size: 18px; }
+
+  /* stats strip */
+  .stats { padding: 40px 0 0; }
+  .stats ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--panel); }
+  .stats li { padding: 24px 22px; border-left: 1px solid var(--line); }
+  .stats li:first-child { border-left: 0; }
+  .stats b { display: block; font: 700 clamp(26px, 3.4vw, 34px)/1.1 var(--sans); letter-spacing: -0.02em; }
+  .stats span { display: block; margin-top: 6px; color: var(--text2); font-size: 14px; line-height: 1.4; }
+  @media (max-width: 820px) {
+    .stats ul { grid-template-columns: 1fr 1fr; }
+    .stats li:nth-child(3) { border-left: 0; }
+    .stats li:nth-child(n+3) { border-top: 1px solid var(--line); }
+  }
+
+  /* why grid */
+  .grid3 { margin-top: 48px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 920px) { .grid3 { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 600px) { .grid3 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 26px; transition: border-color .2s ease, transform .2s ease; }
+  .card:hover { border-color: var(--line2); transform: translateY(-2px); }
+  .card .ico { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-ink); }
+  .card .ico svg { width: 22px; height: 22px; }
+  .card h3 { margin: 18px 0 0; font-size: 19px; letter-spacing: -0.01em; }
+  .card p { margin: 8px 0 0; color: var(--text2); font-size: 15.5px; }
+
+  /* search demo */
+  .search-demo { margin: 48px auto 0; max-width: 820px; }
+  .searchbar {
+    display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 62px;
+    background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; box-shadow: 0 0 0 6px var(--accent-soft);
+    font: 500 clamp(14px, 2.4vw, 18px)/1 var(--mono); overflow: hidden;
+  }
+  .searchbar svg { width: 20px; height: 20px; color: var(--text3); flex: none; }
+  .q { white-space: pre; color: var(--text); }
+  .q .k { color: var(--accent-ink); }
+  .q .neg { color: var(--danger); }
+  .caret { width: 2px; height: 24px; background: var(--accent); animation: blink 1s steps(1) infinite; flex: none; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .syntax { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  .chip { display: inline-flex; gap: 8px; align-items: baseline; padding: 8px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; color: var(--text2); }
+  .chip code { font: 600 13.5px/1 var(--mono); color: var(--text); }
+
+  /* feature rows */
+  .feature { display: grid; grid-template-columns: 5fr 7fr; gap: 56px; align-items: center; margin-top: 96px; }
+  .feature:first-of-type { margin-top: 56px; }
+  .feature.flip { grid-template-columns: 7fr 5fr; }
+  .feature.flip .copy { order: 2; }
+  @media (max-width: 900px) {
+    .feature, .feature.flip { grid-template-columns: 1fr; gap: 28px; margin-top: 72px; }
+    .feature.flip .copy { order: 0; }
+  }
+  .feature h3 { margin: 12px 0 0; font-size: clamp(24px, 3vw, 32px); line-height: 1.15; letter-spacing: -0.02em; }
+  .feature p { color: var(--text2); margin: 14px 0 0; }
+  .feature ul { margin: 18px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .feature li { position: relative; padding-left: 28px; color: var(--text2); font-size: 16px; }
+  .feature li::before { content: ""; position: absolute; left: 2px; top: .55em; width: 14px; height: 8px; border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: rotate(-45deg); }
+  .feature li strong { color: var(--text); font-weight: 600; }
+  .feature .shot { margin: 0; }
+  kbd {
+    display: inline-grid; place-items: center; min-width: 28px; height: 28px; padding: 0 7px;
+    font: 700 14px/1 var(--mono); color: var(--text); background: var(--raised);
+    border: 1px solid var(--line2); border-bottom-width: 3px; border-radius: 7px; vertical-align: middle;
+  }
+
+  /* sync visual */
+  .sync { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 26px; box-shadow: var(--shadow); }
+  .sync-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); font-size: 15px; }
+  .sync-row:first-child { border-top: 0; padding-top: 0; }
+  .sync-row .lbl { color: var(--text3); font: 600 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .sync-row .val { font: 600 16px/1.2 var(--mono); }
+  .sync-row .val .from { color: var(--text3); text-decoration: line-through; margin-right: 8px; font-weight: 500; }
+  .sync-row .val .to { color: var(--accent-ink); }
+  .mini-wave { display: flex; align-items: center; gap: 3px; height: 64px; margin-top: 18px; }
+  .mini-wave i { flex: 1; border-radius: 3px; background: var(--accent); opacity: .7; }
+  .mini-wave i.played { opacity: 1; }
+  .mini-wave i:not(.played) { background: var(--line2); }
+
+  /* how it works */
+  .steps { margin-top: 48px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+  @media (max-width: 820px) { .steps { grid-template-columns: 1fr; } }
+  .step { position: relative; padding: 28px 26px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); }
+  .step::before { counter-increment: s; content: "0" counter(s); font: 700 14px/1 var(--mono); color: var(--accent-ink); }
+  .step h3 { margin: 16px 0 0; font-size: 20px; letter-spacing: -0.01em; }
+  .step p { margin: 8px 0 0; color: var(--text2); font-size: 15.5px; }
+
+  /* support */
+  .support { position: relative; isolation: isolate; }
+  .support::before { content: ""; position: absolute; inset: 10% 0 auto; height: 520px; z-index: -1; background: radial-gradient(50% 50% at 50% 50%, var(--accent-soft), transparent 70%); }
+  .buy-card {
+    margin: 44px auto 0; max-width: 620px; padding: 34px; border-radius: 22px;
+    background: var(--panel); border: 1px solid var(--line2); box-shadow: var(--shadow);
+  }
+  .includes { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .includes li { display: flex; gap: 10px; color: var(--text2); font-size: 15.5px; }
+  .includes svg { width: 20px; height: 20px; color: var(--accent); flex: none; margin-top: 2px; }
+  .donate { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .opt { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); }
+  .opt-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .opt-top b { font-size: 16px; }
+  .opt-top > span { color: var(--text3); font-size: 13.5px; }
+  .opt .btn { width: 100%; padding: 0 14px; font-size: 15px; white-space: nowrap; }
+  .buy-card .includes { margin-top: 0; }
+  @media (max-width: 520px) {
+    .buy-card { padding: 24px 20px; }
+    .donate { grid-template-columns: 1fr; }
+  }
+  .fine { margin: 14px 0 0; text-align: center; color: var(--text3); font-size: 13.5px; }
+  /* faq */
+  .faq { margin: 44px auto 0; max-width: 780px; display: grid; gap: 10px; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  details[open] { border-color: var(--line2); }
+  summary { list-style: none; cursor: pointer; padding: 20px 56px 20px 22px; position: relative; font-weight: 600; font-size: 17px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; position: absolute; right: 24px; top: 50%; width: 10px; height: 10px; border-right: 2px solid var(--text3); border-bottom: 2px solid var(--text3); transform: translateY(-70%) rotate(45deg); transition: transform .2s ease; }
+  details[open] summary::after { transform: translateY(-30%) rotate(-135deg); }
+  details p { margin: 0; padding: 0 22px 20px; color: var(--text2); font-size: 16px; }
+
+  /* final cta */
+  .final { text-align: center; padding: 110px 0 120px; }
+  .final h2 { max-width: 16ch; margin-left: auto; margin-right: auto; }
+  .final p { color: var(--text2); margin: 16px auto 0; max-width: 560px; font-size: 18px; }
+  .final .hero-cta { margin-top: 30px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--text3); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; align-items: center; }
+  footer a { color: var(--text2); }
+  footer .links { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+
+  /* mobile sticky buy bar */
+  .mbar {
+    position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 60; display: none;
+    align-items: center; justify-content: space-between; gap: 12px; padding: 10px 10px 10px 16px; border-radius: 16px;
+    background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line2);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: 0 20px 40px -20px rgba(0,0,0,.6);
+    transform: translateY(140%); transition: transform .3s ease;
+  }
+  .mbar.show { transform: translateY(0); }
+  .mbar .t { font-weight: 650; font-size: 15px; line-height: 1.2; }
+  .mbar .t small { display: block; color: var(--text3); font-weight: 500; font-size: 13px; }
+  @media (max-width: 720px) { .mbar { display: flex; } footer { padding-bottom: 110px; } }
+
+  /* reveal */
+  .js .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+  .js .reveal.in { opacity: 1; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+    .js .reveal { opacity: 1; transform: none; }
+    .hero .shot { transform: none; }
+    .wave i { height: 60%; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Saga, back to top">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="160 180 760 720" fill="currentColor"><path d="M843 431.47C843 414.228 856.879 400.25 874 400.25C891.121 400.25 905 414.228 905 431.47L905 735.03C905 752.272 891.121 766.25 874 766.25C856.879 766.25 843 752.272 843 735.03L843 431.47Z"/><path d="M731 320.523C731 303.251 745.103 289.25 762.5 289.25C779.897 289.25 794 303.251 794 320.523L794 843.977C794 861.249 779.897 875.25 762.5 875.25C745.103 875.25 731 861.249 731 843.977L731 320.523Z"/><path d="M619 520.646C619 507.173 633.103 496.25 650.5 496.25C667.897 496.25 682 507.173 682 520.646L682 757.854C682 771.327 667.897 782.25 650.5 782.25C633.103 782.25 619 771.327 619 757.854L619 520.646Z"/><path d="M509 548.218C509 540.332 513.98 518.25 539.5 518.25C565.02 518.25 570 540.332 570 548.218L570 861.047C570 873.444 561.908 887.25 539.5 887.25C517.092 887.25 509 874.071 509 861.047L509 548.218Z"/><path d="M397 519.646C397 506.173 411.103 495.25 428.5 495.25C445.897 495.25 460 506.173 460 519.646L460 756.854C460 770.327 445.897 781.25 428.5 781.25C411.103 781.25 397 770.327 397 756.854L397 519.646Z"/><path d="M285 321.523C285 304.251 299.103 290.25 316.5 290.25C333.897 290.25 348 304.251 348 321.523L348 844.977C348 862.249 333.897 876.25 316.5 876.25C299.103 876.25 285 862.249 285 844.977L285 321.523Z"/><path d="M174 432.385C174 415.19 187.879 401.25 205 401.25C222.121 401.25 236 415.19 236 432.385L236 735.115C236 752.31 222.121 766.25 205 766.25C187.879 766.25 174 752.31 174 735.115L174 432.385Z"/><path d="M632 335C632 284.19 590.81 243 540 243C489.19 243 448 284.19 448 335C448 385.81 489.19 427 540 427V477C461.576 477 398 413.424 398 335C398 256.576 461.576 193 540 193C618.424 193 682 256.576 682 335C682 413.424 618.424 477 540 477V427C590.81 427 632 385.81 632 335Z"/></svg>
+      </span>
+      <span data-gumroad-field="name">Saga</span>
+    </a>
+    <nav class="nav-links" aria-label="Page sections">
+      <a class="txt" href="#why">Why Saga</a>
+      <a class="txt" href="#features">Features</a>
+      <a class="txt" href="#faq">FAQ</a>
+      <a class="txt" href="#support">Donate</a>
+      <a class="btn btn-primary btn-sm" href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <!-- HERO -->
+  <div class="hero" id="top">
+    <div class="wrap">
+      <span class="eyebrow"><span class="dot" aria-hidden="true"></span>Version 1.0 · macOS &amp; Windows</span>
+      <h1>Every sample you own, <em>already in your key.</em></h1>
+      <p class="lede" data-gumroad-field="description">A fast, smart sample browser for music producers. Point Saga at your sample folders and it indexes them where they are, works out tempo, key and what each sound is, and lets you search, audition and drag samples straight into your DAW, already stretched and pitched to fit your track.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+          Download Saga free
+        </a>
+        <a class="btn btn-ghost" href="#support">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-9.3-8.8A5.2 5.2 0 0 1 12 6.3a5.2 5.2 0 0 1 9.3 4.9C19 15.6 12 20 12 20z"/></svg>
+          Donate
+        </a>
+      </div>
+      <div class="hero-meta">
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Free, every feature included</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Apple Silicon, Intel &amp; Windows</span>
+        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Runs entirely offline</span>
+      </div>
+
+      <div class="wave" aria-hidden="true">
+        <i style="animation-delay:-.2s"></i><i style="animation-delay:-.9s"></i><i style="animation-delay:-.4s"></i><i style="animation-delay:-1.2s"></i><i style="animation-delay:-.1s"></i><i style="animation-delay:-.7s"></i><i style="animation-delay:-1.5s"></i><i style="animation-delay:-.3s"></i><i style="animation-delay:-1s"></i><i style="animation-delay:-.6s"></i><i style="animation-delay:-1.3s"></i><i style="animation-delay:-.5s"></i><i style="animation-delay:-.8s"></i>
+      </div>
+
+      <figure class="shot" id="heroShot" style="margin-top:20px">
+        <img class="img-dark" src="{{hero-dark}}" width="1280" height="800" alt="Saga's library view: a search for synthwave, with a C minor bass loop playing, synced from 118 to 120 BPM and shifted 3 semitones to the project key of A minor.">
+        <img class="img-light" src="{{hero-light}}" width="1280" height="800" alt="Saga's library view in the light theme: a search for synthwave, with a C minor bass loop playing, synced from 118 to 120 BPM and shifted 3 semitones to the project key of A minor.">
+      </figure>
+      <p class="caption">A Cm bass loop at 118 BPM, auditioned at the project's 120 BPM and shifted 3 semitones into A minor. What you hear is what lands in your DAW.</p>
+    </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="wrap">
+      <ul class="reveal">
+        <li><b>0</b><span>files moved, copied or renamed. Ever.</span></li>
+        <li><b>70–80%</b><span>of loop tempos detected right on real packs</span></li>
+        <li><b>37</b><span>scales in the Lab, from Dorian to Hirajoshi</span></li>
+        <li><b>½</b><span>your CPU cores, max. Your DAW keeps the rest.</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- WHY -->
+  <section id="why">
+    <div class="wrap">
+      <div class="sec-head center reveal">
+        <div class="kicker">Why Saga</div>
+        <h2>Stop digging through folders. Start hearing what fits.</h2>
+        <p>Tens of thousands of samples are only useful if you can find the right one before the idea fades.</p>
+      </div>
+      <div class="grid3">
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m9 13 2 2 4-4"/></svg></div>
+          <h3>Nothing moves</h3>
+          <p>Your folders stay exactly as they are. Saga indexes samples where they live and never changes, copies or renames a file.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div>
+          <h3>Instant search</h3>
+          <p>Search names, folders, categories and tags across your whole library, even across drives that come and go.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h2l2-6 4 12 4-9 2 3h4"/></svg></div>
+          <h3>It hears your samples</h3>
+          <p>Tempo and key come from file names, embedded loop data or the audio itself. Every sound gets a fingerprint for Find similar.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>It plays in your key</h3>
+          <p>Set a project tempo and key once. Loops follow while you audition, and the file you drag out is exactly what you heard.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div>
+          <h3>Stays out of your DAW's way</h3>
+          <p>Analysis runs at low priority on half your CPU cores, and the audio device is only held while you preview.</p>
+        </article>
+        <article class="card reveal">
+          <div class="ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          <h3>Private by design</h3>
+          <p>Everything happens on your computer. The only thing Saga fetches is the update check, and you can turn that off.</p>
+        </article>
+      </div>
+
+      <!-- search demo -->
+      <div class="search-demo reveal" aria-labelledby="search-title">
+        <h3 id="search-title" class="sr-only">Search syntax examples</h3>
+        <div class="searchbar" role="img" aria-label="Example search: dusty kick bpm:120-128 key:Am+ is:loop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <span class="q" id="q" aria-hidden="true"><span class="k">bpm:</span>120-128 <span class="k">key:</span>Am+ <span class="k">is:</span>loop</span>
+          <span class="caret" aria-hidden="true"></span>
+        </div>
+        <div class="syntax">
+          <span class="chip"><code>bpm:120-128</code>tempo range</span>
+          <span class="chip"><code>key:Am+</code>A minor &amp; compatible keys</span>
+          <span class="chip"><code>is:loop</code>loops only</span>
+          <span class="chip"><code>cat:kick</code>category</span>
+          <span class="chip"><code>len:&lt;2s</code>length</span>
+          <span class="chip"><code>-dirty</code>exclude a word</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features" style="padding-top:40px">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <div class="kicker">Features</div>
+        <h2>From “where was that loop?” to dragged into your DAW in seconds.</h2>
+      </div>
+
+      <div class="feature">
+        <div class="copy reveal">
+          <div class="kicker">Fits your track</div>
+          <h3>Type a tempo. Pick a key. Everything follows.</h3>
+          <p>Set the project tempo in the title bar (nudge it with arrow keys or tap it) and pick a key from the key wheel. Every loop you audition plays in time and in tune.</p>
+          <ul>
+            <li><strong>Sync</strong>: Stretch keeps the pitch, Repitch speeds up like tape. Saga picks half or double time when that's closer.</li>
+            <li><strong>Key matching</strong> shifts tonal samples by the smallest interval, with formant preservation for vocals.</li>
+            <li><strong>Scale lock</strong>: <kbd>[</kbd> <kbd>]</kbd> step a sample through the project key's scale.</li>
+          </ul>
+        </div>
+        <div class="sync reveal" role="img" aria-label="Example: a loop is synced from 118 to 120 BPM and shifted from C minor to A minor, minus 3 semitones.">
+          <div class="sync-row"><span class="lbl">Sample</span><span class="val">Synth Bass Loop 07.wav</span></div>
+          <div class="sync-row"><span class="lbl">Tempo</span><span class="val"><span class="from">118</span><span class="to">120 BPM</span></span></div>
+          <div class="sync-row"><span class="lbl">Key</span><span class="val"><span class="from">Cm</span><span class="to">Am · −3 st</span></span></div>
+          <div class="sync-row"><span class="lbl">Mode</span><span class="val">Stretch · formants kept</span></div>
+          <div class="mini-wave" id="miniWave" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <div class="feature flip">
+        <div class="copy reveal">
+          <div class="kicker">Shape it, then drag it</div>
+          <h3>Press <kbd>E</kbd> for a real editor, not a preview.</h3>
+          <p>A full-width, zoomable waveform with a bar ruler, loop regions snapped to bars or beats, reverse, fades, gain, normalize and a metronome locked to your tempo.</p>
+          <ul>
+            <li><strong>Drag anything</strong> (a row, the preview or the editor output) into your DAW or Finder.</li>
+            <li><strong>Renders match the preview</strong> because both share the same code. They're kept in <code>Music/Saga/Renders</code>, so your projects keep working.</li>
+            <li><strong>Save variation</strong> adds it to your library with the new tempo and key in its name.</li>
+          </ul>
+        </div>
+        <figure class="shot reveal">
+          <img src="{{editor}}" width="1280" height="800" loading="lazy" alt="The editor: a zoomable stereo waveform with a bar ruler, and cards for tempo, pitch and key, loop region, shape and output.">
+        </figure>
+      </div>
+
+      <div class="feature">
+        <div class="copy reveal">
+          <div class="kicker">Find similar &amp; the sound map</div>
+          <h3>Press <kbd>G</kbd> to find sounds like this one. Press <kbd>M</kbd> to see them all.</h3>
+          <p>Get the closest-sounding samples in your library, compared overall or by timbre, pitch or envelope. Drop in any audio file, or hum, beatbox or play into the mic to search by sound.</p>
+          <ul>
+            <li><strong>The sound map</strong> lays out every sample so similar sounds sit together, colored by category, brightness or loudness.</li>
+            <li><strong>Lasso a group</strong> straight into a collection. Your search and filters light up their matches.</li>
+          </ul>
+        </div>
+        <figure class="shot reveal">
+          <img src="{{sound-map}}" width="1280" height="800" loading="lazy" alt="The sound map: samples as colored dots clustered by category, with a bass loop selected, lines to its closest matches, and the Similar sounds panel listing them by score.">
+        </figure>
+      </div>
+
+      <div class="feature flip">
+        <div class="copy reveal">
+          <div class="kicker">The Lab</div>
+          <h3>Press <kbd>H</kbd> for a harmony workspace that knows your library.</h3>
+          <p>37 scales on a pitch circle and keyboard, with their chords and color notes. Make one the project key, or list the samples that fit it, best fit first.</p>
+          <ul>
+            <li><strong>Progressions</strong>: sketch 2, 4 or 8 bars and drag the MIDI clip into your DAW.</li>
+            <li><strong>Key finder</strong> for any sample, or notes you pick on a keyboard.</li>
+            <li><strong>Tune a one-shot</strong>: measure a kick or 808 and tune it to the key.</li>
+          </ul>
+        </div>
+        <figure class="shot reveal">
+          <img src="{{lab-scales}}" width="1280" height="800" loading="lazy" alt="The Lab's Scales view: A Dorian on a pitch circle and keyboard, its chords with their functions, a brightness ladder of the modes, and matching samples from the library.">
+        </figure>
+      </div>
+
+      <div class="feature">
+        <div class="copy reveal">
+          <div class="kicker">Filters</div>
+          <h3>Narrow ten thousand loops to the ten that work.</h3>
+          <p>Filter by one-shot or loop, category, tempo (with half and double time), key with Camelot compatibility, length, channels, format, sample rate and tags. Histograms show how your library is spread before you pick a range.</p>
+          <ul>
+            <li><strong>Watched folders</strong>: new packs appear on their own.</li>
+            <li><strong>Favorites, collections and tags</strong> wait for unplugged drives to come back.</li>
+          </ul>
+        </div>
+        <figure class="shot reveal">
+          <img src="{{filters}}" width="1280" height="800" loading="lazy" alt="The filter panel: tempo and length histograms with range sliders, a Camelot key wheel, audio format options and tags.">
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="how" style="padding-top:40px">
+    <div class="wrap">
+      <div class="sec-head center reveal">
+        <div class="kicker">How it works</div>
+        <h2>Up and running in three steps.</h2>
+      </div>
+      <div class="steps">
+        <div class="step reveal">
+          <h3>Point it at your samples</h3>
+          <p>Add folders or whole drives, or drop them on the window. Search works right away.</p>
+        </div>
+        <div class="step reveal">
+          <h3>Saga listens once</h3>
+          <p>It analyzes every sample in the background. A big library takes a few minutes, and Find similar fills in as it goes.</p>
+        </div>
+        <div class="step reveal">
+          <h3>Search, audition, drag</h3>
+          <p>Set your project tempo and key, find the sound, and drag it into your DAW ready to use.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SUPPORT -->
+  <section class="support" id="support">
+    <div class="wrap">
+      <div class="sec-head center reveal">
+        <div class="kicker">Support Saga</div>
+        <h2>Saga is free. Donations keep it going.</h2>
+        <p>Download it, use it, keep it. If it's earned a place in your workflow, chip in through Gumroad or PayPal.</p>
+      </div>
+
+      <div class="buy-card reveal">
+        <ul class="includes">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>The full app for macOS (Apple Silicon &amp; Intel) and Windows, free from GitHub</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Every feature included, with automatic updates</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Donations fund new features and fixes. They don't unlock anything.</li>
+        </ul>
+
+        <div class="donate">
+          <div class="opt">
+            <div class="opt-top"><b>Gumroad</b><span>any amount</span></div>
+            <button id="gr-buy" type="button" class="btn btn-primary" data-gumroad-action="buy">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-9.3-8.8A5.2 5.2 0 0 1 12 6.3a5.2 5.2 0 0 1 9.3 4.9C19 15.6 12 20 12 20z"/></svg>
+              Donate on Gumroad
+            </button>
+          </div>
+          <div class="opt">
+            <div class="opt-top"><b>PayPal</b><span>any amount</span></div>
+            <a class="btn btn-ghost" href="https://www.paypal.com/donate/?hosted_button_id=L5TFM8QRVZY7Y" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20s-7-4.4-9.3-8.8A5.2 5.2 0 0 1 12 6.3a5.2 5.2 0 0 1 9.3 4.9C19 15.6 12 20 12 20z"/></svg>
+              Donate with PayPal
+            </a>
+          </div>
+        </div>
+        <p class="fine">Haven't tried it yet? <a href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener">Download Saga free</a> first.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" style="padding-top:40px">
+    <div class="wrap">
+      <div class="sec-head center reveal">
+        <div class="kicker">FAQ</div>
+        <h2>Questions, answered.</h2>
+      </div>
+      <div class="faq">
+        <details class="reveal">
+          <summary>Which computers does Saga run on?</summary>
+          <p>macOS on both Apple Silicon and Intel Macs, and Windows.</p>
+        </details>
+        <details class="reveal">
+          <summary>Will Saga reorganize or touch my sample folders?</summary>
+          <p>No. Saga indexes samples where they are and never changes, copies or renames your files. Processed versions you drag out are rendered to a separate folder, <code>Music/Saga/Renders</code>.</p>
+        </details>
+        <details class="reveal">
+          <summary>Does it work with my DAW?</summary>
+          <p>Saga runs alongside your DAW as its own app. You drag samples, rendered loops and MIDI clips into any DAW or folder that accepts dropped files. A mini player window can stay on top next to your DAW.</p>
+        </details>
+        <details class="reveal">
+          <summary>How accurate is tempo and key detection?</summary>
+          <p>Saga trusts file names first, then embedded loop data (ACID chunks in WAV, Apple Loops in AIFF and CAF), then the audio itself. Values detected from audio are marked with ≈ so you know to check them. On real packs, detection gets the tempo right for 70–80% of loops, and keys are only shown when the fit is strong.</p>
+        </details>
+        <details class="reveal">
+          <summary>Will it slow down my sessions?</summary>
+          <p>Analysis runs at low priority on half your CPU cores, and Saga only holds the audio device while you're previewing, so your DAW keeps control.</p>
+        </details>
+        <details class="reveal">
+          <summary>Does Saga send my library anywhere?</summary>
+          <p>No. Everything happens on your computer. The only thing Saga fetches from the internet is the update check, and you can turn that off in Settings.</p>
+        </details>
+        <details class="reveal">
+          <summary>How long does the first scan take?</summary>
+          <p>Search works as soon as your folders are added. Saga then listens to every sample once in the background, which takes a few minutes for a big library.</p>
+        </details>
+        <details class="reveal">
+          <summary>Is Saga really free?</summary>
+          <p>Yes. <a href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener">Download it from GitHub</a> and every feature is there. A donation of any amount through Gumroad or <a href="https://www.paypal.com/donate/?hosted_button_id=L5TFM8QRVZY7Y" target="_blank" rel="noopener">PayPal</a> helps fund its development, but it doesn't unlock anything or send a download link.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- FINAL CTA -->
+  <section class="final">
+    <div class="wrap reveal">
+      <h2>Spend your session making music, not hunting for it.</h2>
+      <p>Your samples, searchable in an instant and already in time and in key with your track.</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+          Download Saga free
+        </a>
+        <a class="btn btn-ghost" href="#support">Donate</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Saga · Made for producers</span>
+    <span class="links">
+      <a href="https://github.com/Falciighol/saga" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://www.paypal.com/donate/?hosted_button_id=L5TFM8QRVZY7Y" target="_blank" rel="noopener">Donate with PayPal</a>
+      <a href="https://falcighol.gumroad.com">More from Falcighol</a>
+    </span>
+  </div>
+</footer>
+
+<div class="mbar" id="mbar" aria-hidden="true">
+  <div class="t">Saga<small>Free for macOS &amp; Windows</small></div>
+  <a class="btn btn-primary btn-sm" href="https://github.com/Falciighol/saga/releases/latest" target="_blank" rel="noopener" tabindex="-1">Download</a>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  root.classList.add("js");
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---- nav border + mobile buy bar ---- */
+  var nav = document.getElementById("nav");
+  var mbar = document.getElementById("mbar");
+  var support = document.getElementById("support");
+  var heroShot = document.getElementById("heroShot");
+  var ticking = false;
+  function onScroll() {
+    var y = window.scrollY || window.pageYOffset;
+    nav.classList.toggle("scrolled", y > 8);
+    var pr = support.getBoundingClientRect();
+    var inSupport = pr.top < window.innerHeight && pr.bottom > 0;
+    mbar.classList.toggle("show", y > 600 && !inSupport);
+    if (!reduce && heroShot) {
+      var t = Math.max(0, 8 - y / 40);
+      heroShot.style.setProperty("--tilt", t.toFixed(2) + "deg");
+    }
+    ticking = false;
+  }
+  window.addEventListener("scroll", function () { if (!ticking) { ticking = true; requestAnimationFrame(onScroll); } }, { passive: true });
+  onScroll();
+
+  /* ---- reveal on scroll ---- */
+  var els = document.querySelectorAll(".reveal");
+  if (!reduce && "IntersectionObserver" in window) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
+    Array.prototype.forEach.call(els, function (el) { io.observe(el); });
+  } else {
+    Array.prototype.forEach.call(els, function (el) { el.classList.add("in"); });
+  }
+
+  /* ---- mini waveform with playhead ---- */
+  var mw = document.getElementById("miniWave");
+  if (mw) {
+    var N = 56, bars = [];
+    for (var i = 0; i < N; i++) {
+      var b = document.createElement("i");
+      var h = 18 + Math.abs(Math.sin(i * 0.55) * 60 + Math.sin(i * 1.7) * 22);
+      b.style.height = Math.min(100, h) + "%";
+      mw.appendChild(b); bars.push(b);
+    }
+    var pos = 0;
+    function paint() { for (var j = 0; j < N; j++) bars[j].classList.toggle("played", j <= pos); }
+    paint();
+    if (!reduce) setInterval(function () { pos = (pos + 1) % N; paint(); }, 90);
+  }
+
+  /* ---- typed search demo ---- */
+  var q = document.getElementById("q");
+  var queries = [
+    "bpm:120-128 key:Am+ is:loop",
+    "dusty kick -dirty len:<2s",
+    "cat:bass key:F#m tag:warm",
+    "is:oneshot cat:808 ext:wav"
+  ];
+  function render(s) {
+    q.innerHTML = s.replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/(^|\s)(-\w+)/g, '$1<span class="neg">$2</span>')
+      .replace(/\b(bpm|key|is|cat|tag|len|ext):/g, '<span class="k">$1:</span>');
+  }
+  if (q && !reduce) {
+    var qi = 0, ci = queries[0].length, dir = -1, hold = 40;
+    setInterval(function () {
+      var s = queries[qi];
+      if (hold > 0) { hold--; return; }
+      ci += dir;
+      if (dir < 0 && ci <= 0) { qi = (qi + 1) % queries.length; dir = 1; ci = 0; hold = 4; }
+      else if (dir > 0 && ci >= queries[qi].length) { dir = -1; hold = 40; }
+      render(queries[qi].slice(0, Math.max(0, ci)));
+    }, 55);
+  }
+})();
+</script>
+</body>
+</html>

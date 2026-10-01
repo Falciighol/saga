@@ -3,6 +3,7 @@ name = "saga"
 version = "1.0.0"
 description = "A fast, smart sample browser for music producers"
 authors = ["falcighol"]
+license-file = "../LICENSE"
 edition = "2021"
 
 [lib]

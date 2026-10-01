@@ -1,5 +1,5 @@
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AudioLines, Copy, FolderSearch, FolderPlus, ListMinus, Music2, Pause, Play, Plus, Star } from "lucide-react";
 import { create } from "zustand";
 import type { MenuItem } from "../components/Menu";
@@ -77,6 +77,15 @@ export function findSimilar(row: SampleRow) {
 export async function reveal(path: string) {
   try {
     await revealItemInDir(path);
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/** Opens a web page in the default browser. */
+export async function openLink(url: string) {
+  try {
+    await openUrl(url);
   } catch (e) {
     toast(errorMessage(e));
   }

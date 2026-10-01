@@ -763,6 +763,9 @@ export function installMockBackend() {
           return [];
         case "plugin:app|version":
           return "0.1.0";
+        case "plugin:opener|open_url":
+          window.open(String(args.url), "_blank", "noopener");
+          return null;
         case "plugin:updater|check":
           // null: no update. Return { rid: 1, currentVersion: "0.1.0", version: "0.2.0", rawJson: {} } to see the flow.
           return null;

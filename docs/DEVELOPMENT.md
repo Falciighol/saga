@@ -171,3 +171,21 @@ The repository must stay public, since the app downloads `latest.json` and the b
 credentials. Local `npm run tauri:build` doesn't need any of this; the updater bundles are only
 made with `--config src-tauri/tauri.release.conf.json`. Signed Mac builds use the hardened
 runtime; `src-tauri/Entitlements.plist` keeps the microphone working for Find by recording.
+
+## Gumroad page
+
+The Gumroad product page is a custom landing page. Edit `gumroad/landing.src.html`; its `{{name}}`
+placeholders are filled with `gumroad/assets/<name>.webp` as data: URIs, since the page can't load
+anything from elsewhere.
+
+```bash
+npm run gumroad:build     # writes gumroad/landing.html
+npm run gumroad:preview   # runs Gumroad's sanitizer without publishing
+npm run gumroad:publish   # publishes only if the sanitizer stripped nothing
+```
+
+These need the Gumroad CLI signed in (`gumroad auth login`). Gumroad caps the page at 500,000
+characters, so the assets are 1280px copies of `docs/screenshots`. Re-encode them smaller if the
+build says it's over. Elements marked `data-gumroad-field` are filled with the product's live name
+and price, and `data-gumroad-action="buy"` opens checkout. Keep at least one, or the product can't
+be bought. `gumroad products page clear qihzlk --yes` restores Gumroad's default page.

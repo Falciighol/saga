@@ -7,3 +7,4 @@ src-tauri/gen/schemas
 *.log
 release-windows
 release-mac
+gumroad/landing.html

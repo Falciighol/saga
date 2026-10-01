@@ -2,6 +2,7 @@
   "name": "saga",
   "private": true,
   "version": "1.0.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -16,7 +17,10 @@
     "tauri:build": "node scripts/tauri.mjs build",
     "set-version": "node scripts/version.mjs",
     "release:mac": "node scripts/release-mac.mjs",
-    "release:windows": "node scripts/release-windows.mjs"
+    "release:windows": "node scripts/release-windows.mjs",
+    "gumroad:build": "node scripts/gumroad.mjs build",
+    "gumroad:preview": "node scripts/gumroad.mjs preview",
+    "gumroad:publish": "node scripts/gumroad.mjs publish"
   },
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
