@@ -4,10 +4,10 @@ import { useEffect, useState } from "react";
 import { addToCollection, useDragState } from "../lib/actions";
 import { api } from "../lib/api";
 import { pixelRatio } from "../lib/scale";
-import { useLibrary } from "../store/library";
 import { useSimilar } from "../store/similar";
 import { useToasts } from "../store/toasts";
 import { useUpdates } from "../store/updates";
+import { reviewFolders } from "./AddFolders";
 import { cx } from "./ui";
 
 export function Toasts() {
@@ -123,7 +123,7 @@ export function DropTarget() {
           if (ids.length) await addToCollection(target, ids);
           return;
         }
-        if (!useDragState.getState().internal) await useLibrary.getState().addFolders(p.paths);
+        if (!useDragState.getState().internal) await reviewFolders(p.paths);
       }
     });
     return () => {

@@ -2,7 +2,7 @@ import { Folder } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { SuggestedFolder } from "../lib/types";
-import { useLibrary } from "../store/library";
+import { reviewFolders } from "./AddFolders";
 import { chooseFolders } from "./Sidebar";
 import { SectionLabel } from "./ui";
 
@@ -10,7 +10,6 @@ import { SectionLabel } from "./ui";
 export function Welcome() {
   const [suggested, setSuggested] = useState<SuggestedFolder[]>([]);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
-  const addFolders = useLibrary((s) => s.addFolders);
 
   useEffect(() => {
     api
@@ -64,7 +63,7 @@ export function Welcome() {
             <button
               type="button"
               disabled={chosen.length === 0}
-              onClick={() => void addFolders(chosen)}
+              onClick={() => void reviewFolders(chosen)}
               className="mt-3 h-[42px] rounded-[10px] bg-accent text-[14px] font-semibold text-on-accent disabled:opacity-40"
             >
               Add {chosen.length === 1 ? "this folder" : `${chosen.length} folders`}

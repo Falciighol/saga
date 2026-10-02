@@ -20,7 +20,9 @@ interface LibraryState {
   setProgress: (p: IndexProgress) => void;
   toggleExpanded: (sourceId: number, dir: string) => void;
   loadDirs: (sourceId: number, dir: string) => Promise<void>;
-  addFolders: (paths: string[]) => Promise<number>;
+  addFolders: (paths: string[], exclude?: Record<string, string[]>) => Promise<number>;
+  /** Leaves a subfolder out of the library (its samples go), or lets it back in. */
+  setExcluded: (sourceId: number, dir: string, excluded: boolean) => Promise<boolean>;
   removeSource: (id: number) => Promise<void>;
   rescan: (id: number) => Promise<void>;
 }
@@ -83,10 +85,21 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     }
   },
 
-  addFolders: async (paths) => {
+  setExcluded: async (sourceId, dir, excluded) => {
+    try {
+      await api.setDirExcluded(sourceId, dir, excluded);
+      await get().refresh();
+      return true;
+    } catch (e) {
+      toast(errorMessage(e));
+      return false;
+    }
+  },
+
+  addFolders: async (paths, exclude) => {
     if (paths.length === 0) return 0;
     try {
-      const ids = await api.addSources(paths);
+      const ids = await api.addSources(paths, exclude);
       await get().refresh();
       if (ids.length === 0) toast("Those folders are already in your library", "info");
       return ids.length;

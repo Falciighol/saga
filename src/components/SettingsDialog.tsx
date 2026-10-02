@@ -321,23 +321,43 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             <div className="flex flex-col divide-y divide-line rounded-xl border border-line">
               {sources.length === 0 && <span className="px-4 py-3 text-ui text-text3">No folders yet.</span>}
               {sources.map((s) => (
-                <div key={s.id} className="flex items-center gap-3 px-4 py-2.5">
-                  <HardDrive size={15} className={s.online ? "text-text3" : "text-text3 opacity-50"} />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-body">{s.name}</span>
-                    <span className="truncate font-mono text-micro text-text3">{s.path}</span>
+                <div key={s.id} className="flex flex-col">
+                  <div className="flex items-center gap-3 px-4 py-2.5">
+                    <HardDrive size={15} className={s.online ? "text-text3" : "text-text3 opacity-50"} />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-body">{s.name}</span>
+                      <span className="truncate font-mono text-micro text-text3">{s.path}</span>
+                    </div>
+                    <span className="font-mono text-small text-text3 tabular">{s.online ? fmtCount(s.count) : "Not connected"}</span>
+                    <IconButton label={`Rescan ${s.name}`} size={28} onClick={() => void useLibrary.getState().rescan(s.id)}>
+                      <RefreshCw size={14} />
+                    </IconButton>
+                    <IconButton label={`Remove ${s.name} from library`} size={28} onClick={() => void useLibrary.getState().removeSource(s.id)}>
+                      <Trash2 size={14} />
+                    </IconButton>
                   </div>
-                  <span className="font-mono text-small text-text3 tabular">{s.online ? fmtCount(s.count) : "Not connected"}</span>
-                  <IconButton label={`Rescan ${s.name}`} size={28} onClick={() => void useLibrary.getState().rescan(s.id)}>
-                    <RefreshCw size={14} />
-                  </IconButton>
-                  <IconButton label={`Remove ${s.name} from library`} size={28} onClick={() => void useLibrary.getState().removeSource(s.id)}>
-                    <Trash2 size={14} />
-                  </IconButton>
+                  {s.excluded.map((dir) => (
+                    <div key={dir} className="flex h-8 items-center gap-3 pr-4 pl-[43px]">
+                      <span className="shrink-0 text-small text-text3">Excluded</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-micro text-text2" title={dir}>
+                        {dir}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void useLibrary.getState().setExcluded(s.id, dir, false)}
+                        className="h-6 rounded-md px-2 text-small text-text2 hover:bg-raised hover:text-text"
+                      >
+                        Include
+                      </button>
+                    </div>
+                  ))}
+                  {s.excluded.length > 0 && <div className="h-1.5" />}
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-small text-text3">Removing a folder only removes it from Saga. Your files are never moved or changed.</p>
+            <p className="mt-2 text-small text-text3">
+              Removing a folder only removes it from Saga. Your files are never moved or changed. To leave out a folder inside one of these, right-click it in the sidebar.
+            </p>
           </section>
 
           <UpdatesSection />

@@ -10,6 +10,8 @@ pub struct SourceInfo {
     pub name: String,
     pub online: bool,
     pub count: i64,
+    /// Subfolders left out of the library, relative to `path` and `/`-separated.
+    pub excluded: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { create } from "zustand";
+import { cx } from "./ui";
 
 interface PromptRequest {
   title: string;
@@ -82,6 +83,76 @@ export function PromptHost() {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+interface ConfirmRequest {
+  title: string;
+  body: ReactNode;
+  confirm: string;
+  /** The action takes something away. */
+  danger?: boolean;
+  onConfirm: () => void;
+}
+
+interface ConfirmState {
+  request: ConfirmRequest | null;
+  ask: (r: ConfirmRequest) => void;
+  close: () => void;
+}
+
+export const useConfirm = create<ConfirmState>((set) => ({
+  request: null,
+  ask: (request) => set({ request }),
+  close: () => set({ request: null }),
+}));
+
+export function ConfirmHost() {
+  const request = useConfirm((s) => s.request);
+  const close = useConfirm((s) => s.close);
+  const confirm = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (request) requestAnimationFrame(() => confirm.current?.focus());
+  }, [request]);
+
+  if (!request) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-(--overlay)" onMouseDown={close}>
+      <div
+        role="alertdialog"
+        aria-label={request.title}
+        className="animate-pop w-[400px] rounded-2xl border border-line2 bg-panel p-5 shadow-pop"
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            close();
+          }
+        }}
+      >
+        <div className="flex flex-col gap-2">
+          <span className="text-title font-semibold">{request.title}</span>
+          <div className="text-ui leading-normal text-pretty text-text2">{request.body}</div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={close} className="h-8 rounded-lg px-3 text-ui text-text2 hover:bg-raised">
+            Cancel
+          </button>
+          <button
+            ref={confirm}
+            type="button"
+            onClick={() => {
+              request.onConfirm();
+              close();
+            }}
+            className={cx("h-8 rounded-lg px-3.5 text-ui font-semibold", request.danger ? "bg-[#E5705E] text-[#1B1D21]" : "bg-accent text-on-accent")}
+          >
+            {request.confirm}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

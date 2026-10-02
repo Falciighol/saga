@@ -6,6 +6,21 @@ export interface SourceInfo {
   name: string;
   online: boolean;
   count: number;
+  /** Subfolders left out of the library, relative to `path` and `/`-separated. */
+  excluded: string[];
+}
+
+/** A folder inside one that's about to be added. */
+export interface Subfolder {
+  name: string;
+  hasChildren: boolean;
+}
+
+/** A folder that can be added to the library, with the folders directly inside it. */
+export interface FolderCandidate {
+  path: string;
+  name: string;
+  subfolders: Subfolder[];
 }
 
 export interface DirNode {

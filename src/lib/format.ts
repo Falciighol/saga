@@ -74,6 +74,18 @@ export function keyText(row: { key: string | null; keySource: string | null }): 
   return `${row.keySource === "audio" ? ESTIMATE : ""}${row.key}`;
 }
 
+/** One line about a sound: "Bass · 8.1 s · Cm · −14.5 LUFS". */
+export function soundSummary(row: {
+  category: string | null;
+  duration: number | null;
+  key: string | null;
+  keySource: string | null;
+  loudness: number | null;
+  peakDb: number | null;
+}): string {
+  return [row.category ?? "Uncategorized", fmtLength(row.duration), keyText(row), fmtDb(row.loudness, "LUFS") || fmtDb(row.peakDb, "dB peak")].filter(Boolean).join(" · ");
+}
+
 export function sourceHint(what: "Tempo" | "Key", source: string | null): string | undefined {
   switch (source) {
     case "metadata":

@@ -1,11 +1,18 @@
 import { useRef, useState } from "react";
+import { dragOut } from "../lib/actions";
+import { api, errorMessage } from "../lib/api";
 import { fmtBpm } from "../lib/format";
+import { keyClip } from "../lib/keyMidi";
 import { camelot, keyLongName, projectKeyLabel } from "../lib/keys";
+import type { ProjectKey } from "../lib/processing";
 import { isPlain, scaleById } from "../lib/theory";
+import { usePrefs } from "../store/prefs";
 import { useUi } from "../store/ui";
 import { useProject } from "../store/project";
+import { toast } from "../store/toasts";
 import { KeyWheel } from "./KeyWheel";
 import { Popover } from "./Popover";
+import { GripIcon } from "./PreviewPanel";
 import { cx, Kbd, Switch } from "./ui";
 
 const MIN_BPM = 30;
@@ -83,6 +90,43 @@ export function TempoControl({ compact }: { compact?: boolean }) {
   );
 }
 
+/** Drags the project key's scale into a DAW as a MIDI clip: a bar up the scale, then a bar for each related key if asked. */
+function KeyMidi({ projectKey }: { projectKey: ProjectKey | null }) {
+  const bpm = useProject((s) => s.bpm);
+  const related = usePrefs((s) => s.keyMidiRelated);
+  const setPrefs = usePrefs((s) => s.set);
+  const clip = projectKey ? keyClip(projectKey, related) : null;
+  const label = `${fmtBpm(bpm)} BPM`;
+  const file = clip ? `${clip.name} (${label}).mid` : "Pick a key first";
+  return (
+    <div className={cx("flex flex-col gap-1.5 self-stretch", !clip && "pointer-events-none opacity-45")}>
+      <div
+        draggable={!!clip}
+        role="button"
+        tabIndex={-1}
+        aria-label={`Drag into your DAW as MIDI: ${file}`}
+        title={clip ? `One bar up the scale${clip.related.length ? `, then ${clip.related.join(", ")}` : ""}. The clip is saved in Music › Saga › Renders.` : undefined}
+        onDragStart={(e) => {
+          e.preventDefault();
+          if (!clip) return;
+          api
+            .saveMidi(clip.notes, clip.beats, bpm, clip.name, label)
+            .then((path) => dragOut([path]))
+            .catch((err) => toast(`Couldn't write the MIDI clip: ${errorMessage(err)}`));
+        }}
+        className="flex h-11 cursor-grab items-center gap-2 rounded-lg border border-dashed border-accent-wave bg-accent-soft pr-3 pl-2 active:cursor-grabbing"
+      >
+        <GripIcon className="shrink-0 fill-accent-ink" />
+        <span className="flex min-w-0 flex-col gap-px">
+          <span className="text-ui font-semibold">Drag scale as MIDI</span>
+          <span className="truncate font-mono text-[10.5px] text-text3">{file}</span>
+        </span>
+      </div>
+      <Switch checked={related} onChange={(v) => setPrefs({ keyMidiRelated: v })} label="Include related keys" className="h-6" />
+    </div>
+  );
+}
+
 export function KeyControl({ compact }: { compact?: boolean }) {
   const key = useProject((s) => s.key);
   const scaleLock = useProject((s) => s.scaleLock);
@@ -130,6 +174,7 @@ export function KeyControl({ compact }: { compact?: boolean }) {
               <Kbd>[</Kbd> <Kbd>]</Kbd> and the pitch buttons step a sample through {key ? projectKeyLabel(key) : "the key"} instead of by semitones.
             </span>
           </div>
+          <KeyMidi projectKey={key} />
           <div className="flex gap-1 self-stretch">
             <button type="button" onClick={() => { set({ key: null }); close(); }} className="h-7 flex-1 rounded-md text-small text-text2 hover:bg-raised">
               No project key

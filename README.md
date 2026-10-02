@@ -34,6 +34,9 @@ and Intel) or Windows.
 
 Add folders or whole drives with the button, or drop them on the window. Folders are watched, so
 new packs appear on their own. Unplug a drive and its favorites and tags wait until it's back.
+Untick the folders inside you'd rather leave out when you add one, or right-click a folder later
+and choose **Exclude from library**; excluded folders come back from the library folder's
+right-click menu or Settings.
 
 - **Instant search** over names, folders, categories and tags, plus [field syntax](#search-syntax)
   like `bpm:120-128 key:Am+ is:loop`.
@@ -70,6 +73,8 @@ wheel.
   semitones and cents on top and formant preservation for vocals.
 - **Scale lock** makes `[ ]` step a sample through the project key's scale instead of by
   semitones.
+- **The key as MIDI**: drag the tile in the key popup into your DAW for a clip that runs up the
+  project key's scale, with a bar for each related key if you want them.
 
 ### Shape it, then drag it
 
@@ -94,8 +99,10 @@ microphone.
 
 Press `M` for the **sound map**: every sample laid out so similar sounds sit together, colored by
 category, brightness or loudness. Your search and filters light up their matches. Click a sound
-to hear it and link its closest matches, lasso a group to add it to a collection, and scroll or
-pinch to move around.
+to hear it and link its closest matches, or drag across the map to hear each sound you pass.
+Shift-drag (or the lasso tool) draws around a group to add it to a collection, and scrolling or
+pinching moves around. Details of the sound under the pointer show in the Similar sounds panel,
+out of the way of its neighbours.
 
 ![The sound map: samples as colored dots clustered by category, with a bass loop selected, lines to its closest matches, and the Similar sounds panel listing them by score](docs/screenshots/sound-map.webp)
 

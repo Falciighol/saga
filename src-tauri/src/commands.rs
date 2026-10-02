@@ -2,6 +2,7 @@
 
 use crate::audio::{output_devices, Cmd};
 use crate::dsp::ProcessParams;
+use crate::indexer::skip_name;
 use crate::model::*;
 use crate::record::{self, EmitLevel};
 use crate::render::{self, file_name, free_path, render_key, render_name, render_to, write_once};
@@ -29,23 +30,94 @@ pub async fn list_sources(state: State<'_, AppState>) -> CmdResult<Vec<SourceInf
     state.db.sources().map_err(err)
 }
 
+/// The path as a library folder is stored, when it can become one.
+fn addable(existing: &[SourceInfo], path: &str) -> Option<String> {
+    let p = path.trim_end_matches(['/', '\\']).to_string();
+    // Adding a folder that's already inside a library folder would index files twice.
+    if existing.iter().any(|s| Path::new(&p).starts_with(&s.path) && s.path != p) {
+        return None;
+    }
+    // Files dropped on the window aren't library folders.
+    Path::new(&p).is_dir().then_some(p)
+}
+
+/// `exclude`: subfolders to leave out, by the path they belong to (relative to it, `/`-separated).
 #[tauri::command]
-pub async fn add_sources(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<i64>> {
+pub async fn add_sources(state: State<'_, AppState>, paths: Vec<String>, exclude: Option<HashMap<String, Vec<String>>>) -> CmdResult<Vec<i64>> {
     let existing = state.db.sources().map_err(err)?;
     let mut ids = Vec::new();
-    for p in paths {
-        let p = p.trim_end_matches(['/', '\\']).to_string();
-        // Adding a folder that's already inside a library folder would index files twice.
-        if existing.iter().any(|s| Path::new(&p).starts_with(&s.path) && s.path != p) {
-            continue;
-        }
-        // Files dropped on the window aren't library folders.
-        if !Path::new(&p).is_dir() {
-            continue;
-        }
-        ids.push(state.indexer.add_source(&p)?);
+    for raw in paths {
+        let Some(p) = addable(&existing, &raw) else { continue };
+        let skip = exclude.as_ref().and_then(|m| m.get(&raw).or_else(|| m.get(&p))).map(Vec::as_slice).unwrap_or_default();
+        ids.push(state.indexer.add_source(&p, skip)?);
     }
     Ok(ids)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subfolder {
+    name: String,
+    has_children: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderCandidate {
+    path: String,
+    name: String,
+    subfolders: Vec<Subfolder>,
+}
+
+/// The folders directly inside `dir` that a scan would read, by name.
+fn subfolders(dir: &Path, with_children: bool) -> Vec<Subfolder> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<Subfolder> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let path = e.path();
+            (path.is_dir() && !skip_name(&name, true)).then(|| Subfolder { has_children: with_children && !subfolders(&path, false).is_empty(), name })
+        })
+        .collect();
+    out.sort_by_key(|s| s.name.to_lowercase());
+    out
+}
+
+/// What adding these paths would add: the ones that are folders and not in the library yet,
+/// each with its subfolders, so some can be left out before anything is indexed.
+#[tauri::command]
+pub async fn folder_candidates(state: State<'_, AppState>, paths: Vec<String>) -> CmdResult<Vec<FolderCandidate>> {
+    let existing = state.db.sources().map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out: Vec<FolderCandidate> = Vec::new();
+        for p in paths.iter().filter_map(|raw| addable(&existing, raw)) {
+            if out.iter().any(|c| c.path == p) || existing.iter().any(|s| s.path == p) {
+                continue;
+            }
+            let dir = Path::new(&p);
+            let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.clone());
+            out.push(FolderCandidate { subfolders: subfolders(dir, true), name, path: p });
+        }
+        out
+    })
+    .await
+    .map_err(err)
+}
+
+#[tauri::command]
+pub async fn list_subfolders(path: String) -> CmdResult<Vec<Subfolder>> {
+    tauri::async_runtime::spawn_blocking(move || subfolders(Path::new(&path), true)).await.map_err(err)
+}
+
+/// Leaves a subfolder of a library folder out of the library, or lets it back in.
+#[tauri::command]
+pub async fn set_dir_excluded(state: State<'_, AppState>, source_id: i64, dir: String, excluded: bool) -> CmdResult<()> {
+    if excluded {
+        state.indexer.exclude_dir(source_id, &dir)
+    } else {
+        state.indexer.include_dir(source_id, &dir)
+    }
 }
 
 #[tauri::command]
@@ -255,7 +327,7 @@ pub async fn save_variation(state: State<'_, AppState>, id: i64, params: Process
     match sources.iter().find(|s| s.path == dir_str) {
         Some(s) => state.indexer.rescan(s.id),
         None => {
-            state.indexer.add_source(&dir_str)?;
+            state.indexer.add_source(&dir_str, &[])?;
         }
     }
     Ok(dest.to_string_lossy().to_string())

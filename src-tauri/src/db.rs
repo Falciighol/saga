@@ -105,6 +105,11 @@ CREATE TABLE IF NOT EXISTS renders (
     path TEXT NOT NULL,
     created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS excluded_dirs (
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    dir TEXT NOT NULL,
+    PRIMARY KEY (source_id, dir)
+);
 "#;
 
 /// Columns added after the first release, with their definitions.
@@ -113,6 +118,11 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[("features", "BLOB"), ("analysis_versio
 const ROW_COLS: &str = "s.id, s.source_id, s.path, s.name, s.ext, s.dir, src.name, s.duration, s.sample_rate, \
     s.channels, s.bit_depth, s.bpm, s.bpm_source, s.key_pc, s.key_mode, s.kind, s.category, s.auto_tags, \
     s.user_tags, s.peak_db, s.loudness, s.peaks, s.status, s.favorite, src.online, s.play_count, s.key_source";
+
+/// Matches the file at path `?2` and every file in the folder `?3`, which is that same path relative
+/// to its source ('' for the source itself). Folders are compared through `dir`, which is
+/// `/`-separated on every platform; stored paths use the platform's separator.
+const UNDER: &str = "(path = ?2 OR ?3 = '' OR dir = ?3 OR substr(dir, 1, length(?3) + 1) = ?3 || '/')";
 
 fn value_source(v: i64) -> Option<&'static str> {
     match v {
@@ -342,9 +352,31 @@ impl Db {
              FROM sources src ORDER BY src.name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |r| {
-            Ok(SourceInfo { id: r.get(0)?, path: r.get(1)?, name: r.get(2)?, online: r.get::<_, i64>(3)? == 1, count: r.get(4)? })
+            Ok(SourceInfo { id: r.get(0)?, path: r.get(1)?, name: r.get(2)?, online: r.get::<_, i64>(3)? == 1, count: r.get(4)?, excluded: Vec::new() })
         })?;
-        rows.collect()
+        let mut sources: Vec<SourceInfo> = rows.collect::<DbResult<_>>()?;
+        let mut stmt = conn.prepare("SELECT source_id, dir FROM excluded_dirs ORDER BY dir COLLATE NOCASE")?;
+        for row in stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+            let (id, dir) = row?;
+            if let Some(s) = sources.iter_mut().find(|s| s.id == id) {
+                s.excluded.push(dir);
+            }
+        }
+        Ok(sources)
+    }
+
+    /// Leaves a subfolder (relative to the source, `/`-separated) out of the library, or lets it back in.
+    pub fn set_excluded(&self, source_id: i64, dir: &str, excluded: bool) -> DbResult<()> {
+        let conn = self.write.lock();
+        // A folder covers everything inside it, so entries beneath it are redundant either way.
+        conn.execute(
+            "DELETE FROM excluded_dirs WHERE source_id = ?1 AND (dir = ?2 OR substr(dir, 1, length(?2) + 1) = ?2 || '/')",
+            params![source_id, dir],
+        )?;
+        if excluded {
+            conn.execute("INSERT INTO excluded_dirs(source_id, dir) VALUES(?, ?)", params![source_id, dir])?;
+        }
+        Ok(())
     }
 
     pub fn source(&self, id: i64) -> DbResult<Option<SourceInfo>> {
@@ -359,8 +391,9 @@ impl Db {
 
     // ---- scanning ----
 
-    /// Files already indexed for a source, optionally limited to one path and everything under it.
-    pub fn files_under(&self, source_id: i64, prefix: Option<&str>) -> DbResult<HashMap<String, (i64, i64, i64)>> {
+    /// Files already indexed for a source, optionally limited to one path and everything under it:
+    /// the path as stored, and the same path relative to the source (`/`-separated).
+    pub fn files_under(&self, source_id: i64, under: Option<(&str, &str)>) -> DbResult<HashMap<String, (i64, i64, i64)>> {
         let conn = self.read.lock();
         let mut out = HashMap::new();
         let mut collect = |stmt: &mut rusqlite::Statement, p: &[&dyn rusqlite::ToSql]| -> DbResult<()> {
@@ -371,13 +404,10 @@ impl Db {
             }
             Ok(())
         };
-        match prefix {
-            Some(pre) => {
-                let with_sep = format!("{}/", pre.trim_end_matches('/'));
-                let mut stmt = conn.prepare(
-                    "SELECT path, id, size, mtime FROM samples WHERE source_id = ?1 AND (path = ?2 OR substr(path, 1, ?3) = ?4)",
-                )?;
-                collect(&mut stmt, &[&source_id, &pre, &(with_sep.chars().count() as i64), &with_sep])?;
+        match under {
+            Some((path, rel)) => {
+                let mut stmt = conn.prepare(&format!("SELECT path, id, size, mtime FROM samples WHERE source_id = ?1 AND {UNDER}"))?;
+                collect(&mut stmt, &[&source_id, &path, &rel])?;
             }
             None => {
                 let mut stmt = conn.prepare("SELECT path, id, size, mtime FROM samples WHERE source_id = ?1")?;
@@ -449,15 +479,30 @@ impl Db {
         Ok(())
     }
 
-    /// Removes a file, or a folder and everything in it, from the index.
-    pub fn delete_under(&self, source_id: i64, path: &str) -> DbResult<usize> {
-        let with_sep = format!("{}/", path.trim_end_matches('/'));
+    /// Removes a file, or a folder and everything in it, from the index. `rel` is `path` relative
+    /// to the source (`/`-separated).
+    pub fn delete_under(&self, source_id: i64, path: &str, rel: &str) -> DbResult<usize> {
+        let n = self
+            .write
+            .lock()
+            .execute(&format!("DELETE FROM samples WHERE source_id = ?1 AND {UNDER}"), params![source_id, path, rel])?;
+        self.changed();
+        Ok(n)
+    }
+
+    /// Removes a subfolder of a source (relative, `/`-separated) and everything in it from the index.
+    pub fn delete_dir(&self, source_id: i64, dir: &str) -> DbResult<usize> {
         let n = self.write.lock().execute(
-            "DELETE FROM samples WHERE source_id = ?1 AND (path = ?2 OR substr(path, 1, ?3) = ?4)",
-            params![source_id, path, with_sep.chars().count() as i64, with_sep],
+            "DELETE FROM samples WHERE source_id = ?1 AND (dir = ?2 OR substr(dir, 1, length(?2) + 1) = ?2 || '/')",
+            params![source_id, dir],
         )?;
         self.changed();
         Ok(n)
+    }
+
+    /// False once a sample has left the index (its folder was removed or excluded).
+    pub fn has_sample(&self, id: i64) -> bool {
+        self.read.lock().query_row("SELECT 1 FROM samples WHERE id = ?", [id], |_| Ok(())).optional().ok().flatten().is_some()
     }
 
     /// New or changed files, then files analyzed by an older version, oldest first.
@@ -1047,7 +1092,63 @@ mod tests {
         assert!(facets.categories.iter().any(|(c, n)| c == "Kick" && *n == 1));
         assert_eq!(facets.bpm_hist.iter().sum::<i64>(), 3);
 
-        db.delete_under(src, "/lib/Nightdrive").unwrap();
+        db.delete_under(src, "/lib/Nightdrive", "Nightdrive").unwrap();
         assert_eq!(names(&db, Filters { text: "nightdrive".into(), ..Default::default() }).len(), 0);
+
+        // Excluding a folder covers the ones inside it; "Dusty Drums 2" is a different folder.
+        db.set_excluded(src, "Dusty Drums/One Shots", true).unwrap();
+        db.set_excluded(src, "Dusty Drums 2", true).unwrap();
+        db.set_excluded(src, "Dusty Drums", true).unwrap();
+        assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Dusty Drums", "Dusty Drums 2"]);
+        assert_eq!(db.delete_dir(src, "Dusty Drums").unwrap(), 2);
+        assert!(!db.has_sample(kick));
+        assert_eq!(names(&db, Filters::default()), vec!["LoFi_Keys_Rhodes_Loop_120_Gm"]);
+        db.set_excluded(src, "Dusty Drums", false).unwrap();
+        assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Dusty Drums 2"]);
+    }
+
+    #[test]
+    fn paths_match_under_a_folder_with_either_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Db::open(&dir.path().join("t.db")).unwrap();
+        // Stored paths use the platform's separator; `dir` is `/`-separated everywhere.
+        for (root, sep) in [("/lib", "/"), (r"C:\Samples", r"\")] {
+            let src = db.add_source(root).unwrap();
+            let at = |rel: &str| format!("{root}{sep}{}", rel.replace('/', sep));
+            let file = |rel: &str| {
+                let (d, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+                ScannedFile {
+                    path: at(&format!("{rel}.wav")),
+                    dir: d.into(),
+                    name: name.into(),
+                    ext: "wav".into(),
+                    size: 100,
+                    mtime: 1,
+                    existing: None,
+                }
+            };
+            let files = [file("Pack/Loops/a"), file("Pack/Loops/b"), file("Pack/c"), file("Pack 2/d"), file("e")];
+            db.upsert_files(src, "lib", &files).unwrap();
+            let under = |rel: &str| {
+                let mut found: Vec<String> = db.files_under(src, Some((&at(rel), rel))).unwrap().into_keys().collect();
+                found.sort();
+                found
+            };
+
+            assert_eq!(db.files_under(src, None).unwrap().len(), 5);
+            // "Pack 2" only shares a prefix with "Pack".
+            assert_eq!(under("Pack"), vec![at("Pack/Loops/a.wav"), at("Pack/Loops/b.wav"), at("Pack/c.wav")], "{sep}");
+            assert_eq!(under("Pack/Loops"), vec![at("Pack/Loops/a.wav"), at("Pack/Loops/b.wav")], "{sep}");
+            assert_eq!(under("Pack/Loops/a.wav"), vec![at("Pack/Loops/a.wav")], "{sep}");
+            assert_eq!(under("e.wav"), vec![at("e.wav")], "{sep}");
+            assert!(under("Pac").is_empty(), "{sep}");
+
+            assert_eq!(db.delete_under(src, &at("Pack/Loops/a.wav"), "Pack/Loops/a.wav").unwrap(), 1, "{sep}");
+            assert_eq!(db.delete_under(src, &at("Pack"), "Pack").unwrap(), 2, "{sep}");
+            assert_eq!(db.delete_under(src, &at("Pack"), "Pack").unwrap(), 0, "{sep}");
+            let mut left: Vec<String> = db.files_under(src, None).unwrap().into_keys().collect();
+            left.sort();
+            assert_eq!(left, vec![at("Pack 2/d.wav"), at("e.wav")], "{sep}");
+        }
     }
 }

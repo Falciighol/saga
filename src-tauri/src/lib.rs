@@ -125,6 +125,9 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::remove_source,
             commands::rescan_source,
             commands::list_dirs,
+            commands::folder_candidates,
+            commands::list_subfolders,
+            commands::set_dir_excluded,
             commands::query_samples,
             commands::get_facets,
             commands::get_sample,
@@ -300,13 +303,44 @@ mod ipc_tests {
         // Adding a file (not a folder) is ignored rather than failing.
         assert_eq!(call(&w, "add_sources", json!({ "paths": [format!("{lib_path}/Drums/One Shots/Kick_Dusty_03.wav")] })), Ok(json!([])));
 
-        let start = Instant::now();
-        std::thread::sleep(Duration::from_millis(150));
-        while !indexer.is_idle() {
-            assert!(start.elapsed() < Duration::from_secs(20));
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        std::thread::sleep(Duration::from_millis(400));
+        let settle = || {
+            let start = Instant::now();
+            std::thread::sleep(Duration::from_millis(150));
+            while !indexer.is_idle() {
+                assert!(start.elapsed() < Duration::from_secs(20));
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        };
+        settle();
+
+        // Leaving subfolders out: in the list shown before folders are added, and later from the folder tree.
+        let extra = tempfile::tempdir().unwrap();
+        write_wav(&extra.path().join("Keep/Snare_Crack.wav"), 0.3);
+        write_wav(&extra.path().join("Keep/Deep/Hat_Closed.wav"), 0.2);
+        write_wav(&extra.path().join("Skip/Full_Mix_120.wav"), 0.5);
+        std::fs::create_dir_all(extra.path().join(".hidden")).unwrap();
+        let extra_path = extra.path().to_string_lossy().to_string();
+        // Files and folders already in the library aren't offered.
+        let offered = call(&w, "folder_candidates", json!({ "paths": [extra_path, lib_path, format!("{lib_path}/Drums"), format!("{extra_path}/Keep/Snare_Crack.wav")] })).unwrap();
+        assert_eq!(offered.as_array().unwrap().len(), 1, "{offered}");
+        assert_eq!(offered[0]["path"], extra_path);
+        assert_eq!(offered[0]["name"], extra.path().file_name().unwrap().to_string_lossy().to_string());
+        assert_eq!(offered[0]["subfolders"], json!([{ "name": "Keep", "hasChildren": true }, { "name": "Skip", "hasChildren": false }]));
+        assert_eq!(call(&w, "list_subfolders", json!({ "path": format!("{extra_path}/Keep") })).unwrap(), json!([{ "name": "Deep", "hasChildren": false }]));
+        let extra_id = call(&w, "add_sources", json!({ "paths": [extra_path], "exclude": { extra_path.clone(): ["Skip"] } })).unwrap()[0].as_i64().unwrap();
+        settle();
+        let extra_source = |w: &WebviewWindow<MockRuntime>| {
+            let sources = call(w, "list_sources", json!({})).unwrap();
+            sources.as_array().unwrap().iter().find(|s| s["id"] == extra_id).unwrap().clone()
+        };
+        assert_eq!((extra_source(&w)["count"].clone(), extra_source(&w)["excluded"].clone()), (json!(2), json!(["Skip"])));
+        call(&w, "set_dir_excluded", json!({ "sourceId": extra_id, "dir": "Keep/Deep", "excluded": true })).unwrap();
+        assert_eq!((extra_source(&w)["count"].clone(), extra_source(&w)["excluded"].clone()), (json!(1), json!(["Keep/Deep", "Skip"])));
+        call(&w, "set_dir_excluded", json!({ "sourceId": extra_id, "dir": "Skip", "excluded": false })).unwrap();
+        settle();
+        assert_eq!((extra_source(&w)["count"].clone(), extra_source(&w)["excluded"].clone()), (json!(2), json!(["Keep/Deep"])));
+        call(&w, "remove_source", json!({ "id": extra_id })).unwrap();
 
         let request = |filters: Value| {
             json!({ "request": { "filters": filters, "sort": "relevance", "desc": false, "offset": 0, "limit": 100, "seed": 1 } })

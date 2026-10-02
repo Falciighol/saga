@@ -1,17 +1,18 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, ChevronDown, ChevronRight, Clock, Folder, HardDrive, Plus, RefreshCw, Sparkle, Star, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronRight, Clock, Folder, FolderMinus, FolderPlus, HardDrive, Plus, RefreshCw, Sparkle, Star, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { newCollection, reveal } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { fmtCount } from "../lib/format";
 import { revealLabel } from "../lib/platform";
 import { COLLECTION_COLORS } from "../lib/theme";
-import type { SourceInfo } from "../lib/types";
+import type { DirNode, SourceInfo } from "../lib/types";
 import { useBrowse, type View } from "../store/browse";
 import { dirKey, useLibrary } from "../store/library";
 import { toast } from "../store/toasts";
+import { reviewFolders } from "./AddFolders";
 import { openContextMenu } from "./Menu";
-import { usePrompt } from "./Prompt";
+import { useConfirm, usePrompt } from "./Prompt";
 import { cx, SectionLabel } from "./ui";
 
 function sameView(a: View, b: View): boolean {
@@ -66,6 +67,36 @@ function NavItem({
   );
 }
 
+/** Leaves a subfolder out of the library, after saying what that takes with it. */
+function excludeFolder(source: SourceInfo, node: DirNode) {
+  useConfirm.getState().ask({
+    title: `Exclude “${node.name}”?`,
+    body: (
+      <>
+        Its {fmtCount(node.count)} {node.count === 1 ? "sample leaves" : "samples leave"} your library, along with any favorites, tags and places in collections. The files stay where
+        they are, and Saga skips this folder until you include it again.
+      </>
+    ),
+    confirm: "Exclude",
+    danger: true,
+    onConfirm: async () => {
+      if (!(await useLibrary.getState().setExcluded(source.id, node.dir, true))) return;
+      const browse = useBrowse.getState();
+      const v = browse.view;
+      // Showing the folder that just left (or one inside it): step out to its parent.
+      if (v.type === "folder" && v.sourceId === source.id && (v.dir === node.dir || v.dir.startsWith(`${node.dir}/`))) {
+        browse.setView({ type: "folder", sourceId: source.id, dir: node.dir.split("/").slice(0, -1).join("/") });
+      } else browse.refresh();
+      toast(`“${node.name}” is excluded. Right-click “${source.name}” to include it again.`, "info");
+    },
+  });
+}
+
+async function includeFolder(source: SourceInfo, dir: string) {
+  if (!(await useLibrary.getState().setExcluded(source.id, dir, false))) return;
+  toast(`Indexing “${dir.split("/").pop()}” again`, "info");
+}
+
 function FolderTree({ source, dir, depth }: { source: SourceInfo; dir: string; depth: number }) {
   const nodes = useLibrary((s) => s.dirs[dirKey(source.id, dir)]);
   const expanded = useLibrary((s) => s.expanded);
@@ -103,7 +134,11 @@ function FolderTree({ source, dir, depth }: { source: SourceInfo; dir: string; d
                   if (n.hasChildren && !open) toggle(source.id, n.dir);
                 }}
                 onContextMenu={(e) =>
-                  openContextMenu(e, [{ label: revealLabel(), onSelect: () => void reveal(`${source.path}/${n.dir}`) }])
+                  openContextMenu(e, [
+                    { label: revealLabel(), onSelect: () => void reveal(`${source.path}/${n.dir}`) },
+                    "separator",
+                    { label: "Exclude from library", danger: true, icon: <FolderMinus size={14} />, onSelect: () => excludeFolder(source, n) },
+                  ])
                 }
               />
             </div>
@@ -161,7 +196,7 @@ function IndexStatus() {
 export async function chooseFolders() {
   const picked = await open({ directory: true, multiple: true, title: "Add sample folders" });
   const paths = picked == null ? [] : Array.isArray(picked) ? picked : [picked];
-  if (paths.length) await useLibrary.getState().addFolders(paths);
+  await reviewFolders(paths);
 }
 
 export function Sidebar() {
@@ -222,6 +257,9 @@ export function Sidebar() {
     openContextMenu(e, [
       { label: "Rescan", icon: <RefreshCw size={14} />, onSelect: () => void useLibrary.getState().rescan(s.id) },
       { label: revealLabel(), onSelect: () => void reveal(s.path) },
+      ...(s.excluded.length
+        ? [{ label: "Include excluded folder", icon: <FolderPlus size={14} />, submenu: s.excluded.map((dir) => ({ label: dir, onSelect: () => void includeFolder(s, dir) })) }]
+        : []),
       "separator",
       {
         label: "Remove from library",

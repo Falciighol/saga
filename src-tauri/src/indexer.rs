@@ -7,7 +7,7 @@ use crate::db::{fts_text, AnalysisOutcome, Db, PendingFile, ScannedFile};
 use crate::decode::is_audio_path;
 use crate::detect;
 use crate::meta;
-use crate::model::IndexProgress;
+use crate::model::{IndexProgress, SourceInfo};
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
@@ -25,6 +25,8 @@ pub type Emit = Arc<dyn Fn(&str, serde_json::Value) + Send + Sync>;
 enum ScanJob {
     Source(i64),
     Paths(i64, Vec<PathBuf>),
+    /// Drops whatever is indexed under a source's excluded folders.
+    Prune(i64),
 }
 
 #[derive(Default)]
@@ -70,12 +72,37 @@ fn lower_thread_priority() {
 const WRITE_BATCH: usize = 64;
 const SCAN_BATCH: usize = 500;
 
-fn skip_entry(e: &walkdir::DirEntry) -> bool {
+/// Hidden files and folders, archive leftovers and app bundles are never part of a library.
+pub fn skip_name(name: &str, is_dir: bool) -> bool {
+    name.starts_with('.') || name == "__MACOSX" || (is_dir && name.ends_with(".app"))
+}
+
+fn skip_entry(e: &walkdir::DirEntry, root: &Path, excluded: &[String]) -> bool {
     if e.depth() == 0 {
         return false;
     }
-    let name = e.file_name().to_string_lossy();
-    name.starts_with('.') || name == "__MACOSX" || (e.file_type().is_dir() && name.ends_with(".app"))
+    let is_dir = e.file_type().is_dir();
+    skip_name(&e.file_name().to_string_lossy(), is_dir)
+        || (is_dir && !excluded.is_empty() && rel_path(root, e.path()).is_some_and(|rel| is_excluded(&rel, excluded)))
+}
+
+/// `path` relative to `root`, `/`-separated; None when it isn't inside it.
+fn rel_path(root: &Path, path: &Path) -> Option<String> {
+    path.strip_prefix(root).ok().map(|p| p.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/"))
+}
+
+/// True for an excluded folder and for anything inside one.
+fn is_excluded(rel: &str, excluded: &[String]) -> bool {
+    excluded.iter().any(|e| rel.strip_prefix(e.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')))
+}
+
+/// A folder relative to its source, as stored: `/`-separated, without leading or trailing slashes.
+fn clean_dir(dir: &str) -> Result<String, String> {
+    let segs: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.is_empty() || segs.iter().any(|s| *s == "." || *s == "..") {
+        return Err("Choose a folder inside a library folder".into());
+    }
+    Ok(segs.join("/"))
 }
 
 fn mtime_secs(m: &std::fs::Metadata) -> i64 {
@@ -83,10 +110,7 @@ fn mtime_secs(m: &std::fs::Metadata) -> i64 {
 }
 
 fn rel_dir(root: &Path, file: &Path) -> String {
-    file.parent()
-        .and_then(|p| p.strip_prefix(root).ok())
-        .map(|p| p.components().map(|c| c.as_os_str().to_string_lossy().to_string()).collect::<Vec<_>>().join("/"))
-        .unwrap_or_default()
+    file.parent().and_then(|p| rel_path(root, p)).unwrap_or_default()
 }
 
 fn send_job(tx: &Sender<ScanJob>, jobs: &AtomicUsize, job: ScanJob) {
@@ -142,6 +166,10 @@ impl Indexer {
                             me.scan_paths(id, paths);
                             id
                         }
+                        ScanJob::Prune(id) => {
+                            me.prune(id);
+                            id
+                        }
                     };
                     me.enqueue_pending(Some(source));
                     me.jobs.fetch_sub(1, Ordering::Relaxed);
@@ -154,12 +182,15 @@ impl Indexer {
         for i in 0..workers {
             let rx = analyze_rx.clone();
             let tx = result_tx.clone();
+            let db = indexer.db.clone();
             std::thread::Builder::new()
                 .name(format!("saga-analyze-{i}"))
                 .spawn(move || {
                     lower_thread_priority();
                     for job in rx {
-                        if tx.send(analyze_one(&job)).is_err() {
+                        // Queued, then removed or excluded: there's nothing left to describe.
+                        let outcome = if db.has_sample(job.id) { analyze_one(&job) } else { AnalysisOutcome { id: job.id, result: Err("No longer in the library".into()) } };
+                        if tx.send(outcome).is_err() {
                             break;
                         }
                     }
@@ -262,14 +293,48 @@ impl Indexer {
         }
     }
 
-    pub fn add_source(&self, path: &str) -> Result<i64, String> {
+    /// Adds a library folder, leaving out the `excluded` subfolders (relative to it).
+    pub fn add_source(&self, path: &str, excluded: &[String]) -> Result<i64, String> {
         let p = Path::new(path);
         if !p.is_dir() {
             return Err(format!("{path} is not a folder"));
         }
         let id = self.db.add_source(path).map_err(|e| e.to_string())?;
+        for dir in excluded {
+            let Ok(dir) = clean_dir(dir) else { continue };
+            self.db.set_excluded(id, &dir, true).map_err(|e| e.to_string())?;
+            self.db.delete_dir(id, &dir).map_err(|e| e.to_string())?;
+        }
         self.send(ScanJob::Source(id));
         Ok(id)
+    }
+
+    /// Leaves a subfolder out of the library: its samples go (with their favorites, tags and
+    /// places in collections), and scans and the watcher pass over it from now on.
+    pub fn exclude_dir(&self, source_id: i64, dir: &str) -> Result<(), String> {
+        let dir = clean_dir(dir)?;
+        let src = self.db.source(source_id).map_err(|e| e.to_string())?.ok_or("That folder is no longer in the library")?;
+        if is_excluded(&dir, &src.excluded) {
+            return Ok(());
+        }
+        self.db.set_excluded(source_id, &dir, true).map_err(|e| e.to_string())?;
+        self.db.delete_dir(source_id, &dir).map_err(|e| e.to_string())?;
+        // A scan that's already walking the folder may still add files from it; clear those once it's done.
+        self.send(ScanJob::Prune(source_id));
+        self.counters.library_dirty.store(true, Ordering::Relaxed);
+        self.counters.progress_dirty.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Lets an excluded subfolder back in and indexes it.
+    pub fn include_dir(&self, source_id: i64, dir: &str) -> Result<(), String> {
+        let dir = clean_dir(dir)?;
+        let src = self.db.source(source_id).map_err(|e| e.to_string())?.ok_or("That folder is no longer in the library")?;
+        self.db.set_excluded(source_id, &dir, false).map_err(|e| e.to_string())?;
+        // Segment by segment, so the paths match the ones a full scan stores on every platform.
+        let start = dir.split('/').fold(PathBuf::from(&src.path), |p, seg| p.join(seg));
+        self.send(ScanJob::Paths(source_id, vec![start]));
+        Ok(())
     }
 
     pub fn remove_source(&self, id: i64) -> Result<(), String> {
@@ -320,8 +385,17 @@ impl Indexer {
         if !src.online {
             let _ = self.db.set_source_online(id, true);
         }
-        self.scan_tree(id, &src.name, &root, &root);
+        self.scan_tree(&src, &root, &root, "");
         self.watch(id, &root);
+    }
+
+    fn prune(&self, id: i64) {
+        let Ok(Some(src)) = self.db.source(id) else { return };
+        for dir in &src.excluded {
+            if self.db.delete_dir(id, dir).is_ok_and(|n| n > 0) {
+                self.counters.library_dirty.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     fn scan_paths(&self, id: i64, mut paths: Vec<PathBuf>) {
@@ -337,18 +411,15 @@ impl Indexer {
             }
         }
         for p in roots {
-            if !p.starts_with(&root) {
-                continue;
-            }
-            let hidden = p.strip_prefix(&root).map(|rel| rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))).unwrap_or(true);
-            if hidden {
+            let Some(rel) = rel_path(&root, &p) else { continue };
+            if rel.split('/').any(|seg| seg.starts_with('.')) || is_excluded(&rel, &src.excluded) {
                 continue;
             }
             if p.exists() {
                 if p.is_dir() || is_audio_path(&p) {
-                    self.scan_tree(id, &src.name, &root, &p);
+                    self.scan_tree(&src, &root, &p, &rel);
                 }
-            } else if let Ok(n) = self.db.delete_under(id, &p.to_string_lossy()) {
+            } else if let Ok(n) = self.db.delete_under(id, &p.to_string_lossy(), &rel) {
                 if n > 0 {
                     self.counters.library_dirty.store(true, Ordering::Relaxed);
                 }
@@ -356,13 +427,16 @@ impl Indexer {
         }
     }
 
-    /// Syncs everything under `start` (a folder or a single file) with the index.
-    fn scan_tree(&self, source_id: i64, source_name: &str, root: &Path, start: &Path) {
+    /// Syncs everything under `start` (a folder or a single file) with the index. `rel` is `start`
+    /// relative to `root`, empty for the root itself.
+    fn scan_tree(&self, src: &SourceInfo, root: &Path, start: &Path, rel: &str) {
+        let (source_id, source_name) = (src.id, src.name.as_str());
         let c = &self.counters;
         c.scanning.fetch_add(1, Ordering::Relaxed);
         c.progress_dirty.store(true, Ordering::Relaxed);
-        let prefix = (start != root).then(|| start.to_string_lossy().to_string());
-        let mut existing = self.db.files_under(source_id, prefix.as_deref()).unwrap_or_default();
+        let start_path = start.to_string_lossy();
+        let under = (!rel.is_empty()).then(|| (start_path.as_ref(), rel));
+        let mut existing = self.db.files_under(source_id, under).unwrap_or_default();
         let mut batch: Vec<ScannedFile> = Vec::new();
         let flush = |batch: &mut Vec<ScannedFile>| {
             if batch.is_empty() {
@@ -376,7 +450,7 @@ impl Indexer {
             c.progress_dirty.store(true, Ordering::Relaxed);
         };
 
-        for entry in WalkDir::new(start).follow_links(true).into_iter().filter_entry(|e| !skip_entry(e)) {
+        for entry in WalkDir::new(start).follow_links(true).into_iter().filter_entry(|e| !skip_entry(e, root, &src.excluded)) {
             let Ok(entry) = entry else { continue };
             if !entry.file_type().is_file() || !is_audio_path(entry.path()) {
                 continue;
@@ -502,7 +576,7 @@ mod tests {
 
         let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
         let ix = Indexer::start(db.clone(), Arc::new(|_, _| {}));
-        let src = ix.add_source(&lib.path().to_string_lossy()).unwrap();
+        let src = ix.add_source(&lib.path().to_string_lossy(), &[]).unwrap();
         wait_idle(&ix);
 
         let rows = all(&db);
@@ -535,5 +609,48 @@ mod tests {
 
         ix.remove_source(src).unwrap();
         assert!(all(&db).is_empty());
+    }
+
+    #[test]
+    fn excluded_folders_stay_out() {
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_wav(&lib.path().join("Pack/Loops/Bass_Loop_120_Am.wav"), 1.0);
+        write_wav(&lib.path().join("Pack/One Shots/Kick_Punchy.wav"), 0.3);
+        write_wav(&lib.path().join("Pack/One Shots/Old/Kick_Flat.wav"), 0.3);
+        write_wav(&lib.path().join("Pack 2/Snare_Crack.wav"), 0.3);
+        write_wav(&lib.path().join("Demos/Full_Mix_120.wav"), 1.0);
+
+        let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
+        let ix = Indexer::start(db.clone(), Arc::new(|_, _| {}));
+        // Left out from the start: the scan never reads the folder.
+        let src = ix.add_source(&lib.path().to_string_lossy(), &["Demos".into()]).unwrap();
+        wait_idle(&ix);
+        let names = |db: &Db| all(db).into_iter().map(|r| r.name).collect::<Vec<_>>();
+        assert_eq!(names(&db), vec!["Bass_Loop_120_Am", "Kick_Flat", "Kick_Punchy", "Snare_Crack"]);
+
+        // Excluded later: its samples (and the folders inside it) go, and a rescan doesn't bring them
+        // back. "Pack 2" only shares a prefix with "Pack", so it stays.
+        ix.exclude_dir(src, "/Pack/One Shots/").unwrap();
+        ix.exclude_dir(src, "Pack/One Shots/Old").unwrap();
+        ix.rescan(src);
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass_Loop_120_Am", "Snare_Crack"]);
+        assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Demos", "Pack/One Shots"]);
+        assert!(ix.exclude_dir(src, "").is_err());
+        assert!(ix.exclude_dir(src, "../elsewhere").is_err());
+
+        // Changes inside an excluded folder are passed over too.
+        write_wav(&lib.path().join("Pack/One Shots/Kick_New.wav"), 0.3);
+        ix.send(ScanJob::Paths(src, vec![lib.path().join("Pack/One Shots/Kick_New.wav"), lib.path().join("Pack/One Shots")]));
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass_Loop_120_Am", "Snare_Crack"]);
+
+        // Included again: everything in it is indexed, nested folders too.
+        ix.include_dir(src, "Pack/One Shots").unwrap();
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass_Loop_120_Am", "Kick_Flat", "Kick_New", "Kick_Punchy", "Snare_Crack"]);
+        assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Demos"]);
+        assert!(all(&db).iter().all(|r| r.status == 1), "included samples are analyzed");
     }
 }

@@ -5,6 +5,7 @@ import type {
   Collection,
   DirNode,
   Facets,
+  FolderCandidate,
   Filters,
   IndexProgress,
   InstalledFont,
@@ -20,6 +21,7 @@ import type {
   SampleRow,
   SimilarResult,
   SourceInfo,
+  Subfolder,
   SuggestedFolder,
   WaveformDetail,
 } from "./types";
@@ -56,7 +58,12 @@ export interface Sequence {
 
 export const api = {
   listSources: () => invoke<SourceInfo[]>("list_sources"),
-  addSources: (paths: string[]) => invoke<number[]>("add_sources", { paths }),
+  /** `exclude`: subfolders to leave out, by the path they belong to (relative to it, `/`-separated). */
+  addSources: (paths: string[], exclude: Record<string, string[]> = {}) => invoke<number[]>("add_sources", { paths, exclude }),
+  /** The paths that are folders not yet in the library, each with its subfolders. */
+  folderCandidates: (paths: string[]) => invoke<FolderCandidate[]>("folder_candidates", { paths }),
+  listSubfolders: (path: string) => invoke<Subfolder[]>("list_subfolders", { path }),
+  setDirExcluded: (sourceId: number, dir: string, excluded: boolean) => invoke<void>("set_dir_excluded", { sourceId, dir, excluded }),
   removeSource: (id: number) => invoke<void>("remove_source", { id }),
   rescanSource: (id: number) => invoke<void>("rescan_source", { id }),
   listDirs: (sourceId: number, dir: string) => invoke<DirNode[]>("list_dirs", { sourceId, dir }),

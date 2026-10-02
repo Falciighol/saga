@@ -6,6 +6,8 @@ import type { Aspect } from "../lib/types";
 
 export type MapColor = "category" | "brightness" | "loudness";
 export type MapArrange = Exclude<Aspect, "overall">;
+/** What dragging across the sound map does; Shift-drag does the other. */
+export type MapDrag = "audition" | "lasso";
 
 export interface PrefValues {
   theme: ThemePref;
@@ -28,10 +30,13 @@ export interface PrefValues {
   loopShots: boolean;
   mapColor: MapColor;
   mapArrange: MapArrange;
+  mapDrag: MapDrag;
   /** What Find similar compares. */
   similarAspect: Aspect;
   /** Keep the mini player above other windows. */
   miniOnTop: boolean;
+  /** The key popup's MIDI clip also runs through the related keys. */
+  keyMidiRelated: boolean;
   /** Look for new versions on launch and download them in the background. */
   autoUpdate: boolean;
 }
@@ -56,8 +61,10 @@ export const usePrefs = create<Prefs>()(
       loopShots: false,
       mapColor: "category",
       mapArrange: "timbre",
+      mapDrag: "audition",
       similarAspect: "overall",
       miniOnTop: true,
+      keyMidiRelated: false,
       autoUpdate: true,
       set: (patch) => set(patch),
     }),

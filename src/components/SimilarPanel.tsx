@@ -1,15 +1,20 @@
 import { ChevronDown, FileAudio, Mic, Pause, Play, Square } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { dragSample, sampleMenu } from "../lib/actions";
-import { fmtCount } from "../lib/format";
+import { fmtCount, soundSummary } from "../lib/format";
 import type { Aspect, SampleRow, SimilarItem } from "../lib/types";
 import { useLibrary } from "../store/library";
 import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { useSimilar } from "../store/similar";
+import { useSoundMap } from "../store/soundmap";
 import { openContextMenu, openMenuBelow } from "./Menu";
 import { cx, SectionLabel, Segmented } from "./ui";
 import { SimilarIcon } from "./ViewToggle";
+import { MiniWave } from "./Waveforms";
+
+/** Room for a waveform inside the panel's padding. */
+const WAVE_WIDTH = 288;
 
 function GripIcon() {
   return (
@@ -51,7 +56,7 @@ function Target() {
   const playing = status === "playing" || status === "loading";
   return (
     <div
-      className="flex items-center gap-2.5"
+      className="flex flex-col gap-2.5"
       draggable={row.online}
       onDragStart={(e) => {
         e.preventDefault();
@@ -59,23 +64,55 @@ function Target() {
       }}
       onContextMenu={(e) => openContextMenu(e, sampleMenu(row, -1))}
     >
-      <button
-        type="button"
-        aria-label={`${playing ? "Pause" : "Play"} ${row.name}`}
-        onClick={() => usePlayer.getState().toggle(row)}
-        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent"
-      >
-        {playing ? <Pause size={12} fill="currentColor" strokeWidth={0} /> : <Play size={12} fill="currentColor" strokeWidth={0} className="translate-x-px" />}
-      </button>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-body font-semibold" title={row.name}>
-          {row.name}
+      <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          aria-label={`${playing ? "Pause" : "Play"} ${row.name}`}
+          onClick={() => usePlayer.getState().toggle(row)}
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent text-on-accent"
+        >
+          {playing ? <Pause size={12} fill="currentColor" strokeWidth={0} /> : <Play size={12} fill="currentColor" strokeWidth={0} className="translate-x-px" />}
+        </button>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-body font-semibold" title={row.name}>
+            {row.name}
+          </span>
+          <span className="truncate text-small text-text3">{where(row)}</span>
+        </div>
+        <span title="Drag into your DAW" className="grid h-8 w-6 shrink-0 cursor-grab place-items-center text-text3">
+          <GripIcon />
+        </span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <MiniWave peaks={row.peaks} width={WAVE_WIDTH} height={26} sampleId={row.id} emphasized />
+        <span className="truncate font-mono text-micro text-text3">{soundSummary(row)}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The sound under the pointer on the map. It sits over the foot of the list rather than
+ * beside the pointer, so it never covers the sounds around the one being looked at.
+ */
+function Hovered() {
+  const hovered = useSoundMap((s) => s.hovered);
+  if (!hovered) return null;
+  const { row, color } = hovered;
+  return (
+    <div className="pointer-events-none absolute inset-x-2 bottom-2 z-10 flex flex-col gap-2 rounded-[10px] border border-line2 bg-raised p-3 shadow-pop">
+      <div className="flex flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-1.5 text-ui font-semibold">
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
+          <span className="truncate">
+            {row.name}
+            <span className="font-normal text-text3">.{row.ext}</span>
+          </span>
         </span>
         <span className="truncate text-small text-text3">{where(row)}</span>
       </div>
-      <span title="Drag into your DAW" className="grid h-8 w-6 shrink-0 cursor-grab place-items-center text-text3">
-        <GripIcon />
-      </span>
+      <MiniWave peaks={row.peaks} width={WAVE_WIDTH - 10} height={26} sampleId={row.id} emphasized />
+      <span className="truncate font-mono text-micro text-text3">{soundSummary(row)}</span>
     </div>
   );
 }
@@ -232,27 +269,30 @@ export function SimilarPanel() {
           ]}
         />
       </div>
-      <div role="listbox" aria-label="Similar sounds" className={cx("min-h-0 flex-1 overflow-y-auto py-1.5", loading && items.length > 0 && "opacity-60")}>
-        {items.map((item, i) => (
-          <Result key={item.row.id} item={item} index={i} active={i === index} />
-        ))}
-        {!items.length && target && (
-          <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center">
-            {loading ? (
-              <span className="animate-soft-pulse text-ui text-text3">Finding similar sounds…</span>
-            ) : (
-              <span className="text-ui text-text3">{message ?? "Nothing sounds much like this yet."}</span>
-            )}
-          </div>
-        )}
-        {!target && (
-          <div className="flex flex-col items-center gap-1 px-6 py-10 text-center text-ui text-text3">
-            <span>You can also drop any audio file here to find samples that sound like it.</span>
-          </div>
-        )}
-        {items.length > 0 && pending > 0 && (
-          <p className="m-0 px-4 pt-2 pb-3 text-small text-text3">Saga is still listening to {fmtCount(pending)} samples; results get better as it goes.</p>
-        )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <Hovered />
+        <div role="listbox" aria-label="Similar sounds" className={cx("min-h-0 flex-1 overflow-y-auto py-1.5", loading && items.length > 0 && "opacity-60")}>
+          {items.map((item, i) => (
+            <Result key={item.row.id} item={item} index={i} active={i === index} />
+          ))}
+          {!items.length && target && (
+            <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center">
+              {loading ? (
+                <span className="animate-soft-pulse text-ui text-text3">Finding similar sounds…</span>
+              ) : (
+                <span className="text-ui text-text3">{message ?? "Nothing sounds much like this yet."}</span>
+              )}
+            </div>
+          )}
+          {!target && (
+            <div className="flex flex-col items-center gap-1 px-6 py-10 text-center text-ui text-text3">
+              <span>You can also drop any audio file here to find samples that sound like it.</span>
+            </div>
+          )}
+          {items.length > 0 && pending > 0 && (
+            <p className="m-0 px-4 pt-2 pb-3 text-small text-text3">Saga is still listening to {fmtCount(pending)} samples; results get better as it goes.</p>
+          )}
+        </div>
       </div>
       <div className="flex shrink-0 gap-2 border-t border-line px-4 py-3">
         <RecordButton />

@@ -62,9 +62,9 @@ function b64(a: Uint8Array) {
 }
 
 const SOURCES: SourceInfo[] = [
-  { id: 1, path: "/Volumes/Samples/Sample Packs", name: "Sample Packs", online: true, count: 0 },
-  { id: 2, path: "/Users/me/Splice/sounds", name: "Splice", online: true, count: 0 },
-  { id: 3, path: "/Users/me/Music/Recordings", name: "Recordings", online: true, count: 0 },
+  { id: 1, path: "/Volumes/Samples/Sample Packs", name: "Sample Packs", online: true, count: 0, excluded: [] },
+  { id: 2, path: "/Users/me/Splice/sounds", name: "Splice", online: true, count: 0, excluded: [] },
+  { id: 3, path: "/Users/me/Music/Recordings", name: "Recordings", online: true, count: 0, excluded: [] },
 ];
 
 const PACKS = [
@@ -152,7 +152,25 @@ function build(): SampleRow[] {
   return rows;
 }
 
-const ROWS = build();
+const ALL_ROWS = build();
+/** Everything in the library: all rows but the ones in excluded folders or removed sources. */
+let ROWS = ALL_ROWS;
+
+function applyExclusions() {
+  ROWS = ALL_ROWS.filter((r) => {
+    const src = SOURCES.find((s) => s.id === r.sourceId);
+    return src != null && !src.excluded.some((dir) => r.dir === dir || r.dir.startsWith(`${dir}/`));
+  });
+  void emit("library-changed");
+}
+
+/** Folders the mock pretends are inside any folder that gets added. */
+const MOCK_SUBFOLDERS = [
+  { name: "Drum Machines", hasChildren: true },
+  { name: "Field Recordings", hasChildren: false },
+  { name: "Old Projects", hasChildren: true },
+  { name: "Vinyl Rips", hasChildren: false },
+];
 const collections: Collection[] = [
   { id: 1, name: "Nightdrive EP", color: "#D9A441", count: 0 },
   { id: 2, name: "Go-to kicks", color: "#B887D6", count: 0 },
@@ -553,6 +571,38 @@ export function installMockBackend() {
       switch (cmd) {
         case "list_sources":
           return SOURCES.map((s) => ({ ...s, count: ROWS.filter((r) => r.sourceId === s.id).length }));
+        case "plugin:dialog|open":
+          // Stands in for the folder picker, so adding folders can be tried in a browser.
+          return (args.options as { directory?: boolean } | undefined)?.directory ? ["/Users/me/Music/Sample Stash"] : null;
+        case "folder_candidates":
+          return [...new Set(args.paths as string[])]
+            .filter((p) => !SOURCES.some((s) => p === s.path || p.startsWith(`${s.path}/`)))
+            .map((path) => ({ path, name: path.split("/").pop() ?? path, subfolders: MOCK_SUBFOLDERS }));
+        case "list_subfolders":
+          return ["808", "909", "LinnDrum"].map((name) => ({ name, hasChildren: false }));
+        case "add_sources": {
+          const exclude = (args.exclude ?? {}) as Record<string, string[]>;
+          const ids: number[] = [];
+          for (const path of args.paths as string[]) {
+            if (SOURCES.some((s) => path === s.path || path.startsWith(`${s.path}/`))) continue;
+            const id = Math.max(0, ...SOURCES.map((s) => s.id)) + 1;
+            SOURCES.push({ id, path, name: path.split("/").pop() ?? path, online: true, count: 0, excluded: [...(exclude[path] ?? [])].sort() });
+            ids.push(id);
+          }
+          return ids;
+        }
+        case "remove_source":
+          SOURCES.splice(SOURCES.findIndex((s) => s.id === args.id), 1);
+          applyExclusions();
+          return null;
+        case "set_dir_excluded": {
+          const src = SOURCES.find((s) => s.id === args.sourceId)!;
+          const dir = args.dir as string;
+          src.excluded = src.excluded.filter((d) => d !== dir && !d.startsWith(`${dir}/`));
+          if (args.excluded) src.excluded = [...src.excluded, dir].sort();
+          applyExclusions();
+          return null;
+        }
         case "list_dirs": {
           const src = args.sourceId as number;
           const parent = args.dir as string;

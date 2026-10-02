@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AddFoldersHost } from "./components/AddFolders";
 import { FilterBar } from "./components/FilterBar";
 import { MenuHost } from "./components/Menu";
 import { Editor } from "./components/Editor";
@@ -7,7 +8,7 @@ import { onTransport } from "./store/lab";
 import { MiniPlayer } from "./components/MiniPlayer";
 import { DropTarget, Toasts, UpdateNotice } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
-import { PromptHost } from "./components/Prompt";
+import { ConfirmHost, PromptHost } from "./components/Prompt";
 import { ListHeader, SampleList } from "./components/SampleList";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -79,6 +80,8 @@ export default function App() {
     <>
       <MenuHost />
       <PromptHost />
+      <ConfirmHost />
+      <AddFoldersHost />
       <Toasts />
       <UpdateNotice />
       <DropTarget />

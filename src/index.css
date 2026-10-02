@@ -174,9 +174,26 @@ input[type="range"] {
   animation: saga-pulse 1.4s ease-in-out infinite;
 }
 
+/* A ring spreading from the sound that's playing on the map. */
+@keyframes saga-map-ping {
+  from {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+
+.animate-map-ping {
+  animation: saga-map-ping 1.1s ease-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-pop,
-  .animate-soft-pulse {
+  .animate-soft-pulse,
+  .animate-map-ping {
     animation: none;
   }
 }
