@@ -190,8 +190,10 @@ On Windows, use Ctrl where these say ⌘.
 | `Space` / `Enter` | Play or pause / play from the start |
 | `←` | Back to the start |
 | `F` / `L` | Favorite / toggle looping |
-| `⌘K` / `⌘⇧F` | Search / filters |
-| `Esc` | Clear search, stop, or close the editor |
+| `⌘K` (or `⌘F`, `/`) | Search |
+| `⌘⇧F` | Filters |
+| `Esc` | Clear the selection or search, close the editor, or stop |
+| `⌘A` | Select all results (`⌘`-click or `⇧`-click to select several) |
 | `⌘,` | Settings |
 | `⌘+` `⌘−` `⌘0` | Interface bigger, smaller, 100% |
 
@@ -205,9 +207,9 @@ On Windows, use Ctrl where these say ⌘.
 
 | Views | |
 | --- | --- |
-| `M` | Sound map or list |
+| `M` | Sound map or list (on the map, `↑ ↓` walk the similar sounds) |
 | `G` | Find similar |
-| `H` | The Lab (inside it, `↑ ↓ ← →` pick scales, roots, bars and chords, and `Space` plays) |
+| `H` | The Lab (inside it, `↑ ↓ ← →` pick scales, roots, bars and chords, `Space` plays, `⌫` clears a bar and `Esc` stops) |
 
 ## Building from source
 

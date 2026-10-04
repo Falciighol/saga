@@ -368,30 +368,59 @@ function SavedSoundsSection() {
   );
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["↑ ↓", "Browse samples"],
-  ["Space", "Play or pause"],
-  ["Enter", "Play from the start"],
-  ["←", "Back to the start"],
-  ["F", "Favorite"],
-  ["L", "Toggle looping"],
-  [`${modKey} K`, "Search"],
-  [`${modKey} ⇧ F`, "Open filters"],
-  ["Esc", "Clear search or stop"],
-  [`${modKey} A`, "Select all results"],
-  [`${modKey} / ⇧ click`, "Select several samples"],
-  [`${modKey} ,`, "Settings"],
-  [`${modKey} + −`, "Interface bigger / smaller"],
-  [`${modKey} 0`, "Interface at 100%"],
-  ["E", "Open the editor"],
-  ["R", "Reverse"],
-  ["[ ]", "Semitone down / up (through the key's scale with scale lock)"],
-  ["S", "Sync to project tempo"],
-  ["K", "Match project key"],
-  ["T", "Tap tempo"],
-  ["M", "Sound map or list"],
-  ["G", "Find similar sounds"],
-  ["H", "The Lab"],
+/** Grouped like the README's tables; keep both in step with src/hooks/useHotkeys.ts. Several keys are alternatives. */
+const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
+  {
+    group: "Browsing",
+    keys: [
+      [["↑ ↓"], "Browse samples (⇧ for 10)"],
+      [["Space"], "Play or pause"],
+      [["Enter"], "Play from the start"],
+      [["←"], "Back to the start"],
+      [["F"], "Favorite"],
+      [["L"], "Toggle looping"],
+      [[`${modKey} K`, "/"], "Search"],
+      [[`${modKey} ⇧ F`], "Open filters"],
+      [["Esc"], "Clear the selection or search, close the editor, or stop"],
+      [[`${modKey} A`], "Select all results"],
+      [[`${modKey} / ⇧ click`], "Select several samples"],
+      [[`${modKey} ,`], "Settings"],
+      [[`${modKey} + −`], "Interface bigger / smaller"],
+      [[`${modKey} 0`], "Interface at 100%"],
+    ],
+  },
+  {
+    group: "Processing",
+    keys: [
+      [["E"], "Open the editor"],
+      [["R"], "Reverse"],
+      [["[ ]"], "Semitone down / up (through the key's scale with scale lock)"],
+      [["S"], "Sync to project tempo"],
+      [["K"], "Match project key"],
+      [["T"], "Tap tempo"],
+    ],
+  },
+  {
+    group: "Views",
+    keys: [
+      [["M"], "Sound map or list"],
+      [["↑ ↓"], "On the map: walk the similar sounds"],
+      [["G"], "Find similar sounds"],
+      [["H"], "The Lab"],
+    ],
+  },
+  {
+    group: "In the Lab",
+    keys: [
+      [["↑ ↓"], "Scales: next or previous scale"],
+      [["← →"], "Scales: change the root"],
+      [["← →"], "Progressions: pick a bar"],
+      [["↑ ↓"], "Progressions: change its chord"],
+      [["⌫"], "Progressions: clear the bar"],
+      [["Space"], "Play the scale or progression"],
+      [["Esc"], "Stop the Lab's sound"],
+    ],
+  },
 ];
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -607,11 +636,22 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
             <section>
               <SectionLabel className="pb-2">Keyboard</SectionLabel>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                {SHORTCUTS.map(([k, what]) => (
-                  <div key={what} className="flex items-center justify-between gap-3 text-ui">
-                    <span className="text-text2">{what}</span>
-                    <Kbd>{k}</Kbd>
+              <div className="flex flex-col gap-4">
+                {SHORTCUTS.map(({ group, keys }) => (
+                  <div key={group}>
+                    <div className="pb-1.5 text-small font-medium text-text3">{group}</div>
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                      {keys.map(([alternatives, what]) => (
+                        <div key={what} className="flex items-center justify-between gap-3 text-ui">
+                          <span className="text-text2">{what}</span>
+                          <span className="flex shrink-0 gap-1">
+                            {alternatives.map((k) => (
+                              <Kbd key={k}>{k}</Kbd>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

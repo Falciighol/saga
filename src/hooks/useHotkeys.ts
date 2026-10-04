@@ -51,8 +51,9 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       }
       if (hasMod(e) && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        // The filters live above the list.
-        if (onMap) ui.setView("list");
+        // The filters live above the list, so leave the mini player, map, Lab or editor for it.
+        if (ui.mini) ui.setMini(false);
+        if (ui.view !== "list" || editing) ui.setView("list");
         window.setTimeout(() => window.dispatchEvent(new Event("saga:open-filters")), 0);
         return;
       }
