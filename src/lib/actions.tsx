@@ -34,14 +34,18 @@ export async function initDragIcon() {
   }
 }
 
-/** True while one of our own samples is being dragged, so drops back onto the window aren't mistaken for new folders. */
-export const useDragState = create<{ internal: boolean }>(() => ({ internal: false }));
+/**
+ * True while one of our own files is being dragged, so drops back onto the window aren't mistaken
+ * for new folders. `ids` are the samples behind it: a render's path isn't in the library, so a drop
+ * on a collection adds these instead of looking the paths up.
+ */
+export const useDragState = create<{ internal: boolean; ids: number[] }>(() => ({ internal: false, ids: [] }));
 
-export function dragOut(paths: string[]) {
+export function dragOut(paths: string[], ids: number[] = []) {
   if (!dragIconPath || paths.length === 0) return;
-  useDragState.setState({ internal: true });
-  startDrag({ item: paths, icon: dragIconPath }, () => useDragState.setState({ internal: false })).catch((e) => {
-    useDragState.setState({ internal: false });
+  useDragState.setState({ internal: true, ids });
+  startDrag({ item: paths, icon: dragIconPath }, () => useDragState.setState({ internal: false, ids: [] })).catch((e) => {
+    useDragState.setState({ internal: false, ids: [] });
     toast(`Couldn't start the drag: ${errorMessage(e)}`);
   });
 }
@@ -50,12 +54,12 @@ export function dragOut(paths: string[]) {
 export function dragSample(row: SampleRow) {
   const p = computeProcessing(row, useProject.getState(), editFor(row.id));
   if (!p.processed) {
-    dragOut([row.path]);
+    dragOut([row.path], [row.id]);
     return;
   }
   // Renders are cached, so this is usually instant; a fresh one takes a moment while the mouse is held.
   fileFor(row, p, true)
-    .then((path) => dragOut([path]))
+    .then((path) => dragOut([path], [row.id]))
     .catch((e) => toast(`Couldn't render: ${errorMessage(e)}`));
 }
 
@@ -72,7 +76,7 @@ export function dragSamples(rows: SampleRow[]) {
     return p.processed ? fileFor(row, p, true) : Promise.resolve(row.path);
   });
   Promise.all(files)
-    .then(dragOut)
+    .then((paths) => dragOut(paths, online.map((r) => r.id)))
     .catch((e) => toast(`Couldn't render: ${errorMessage(e)}`));
 }
 

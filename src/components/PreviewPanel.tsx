@@ -332,7 +332,7 @@ export function DragTile({ row, state, processing, tall }: { row: SampleRow; sta
       title={state.kind === "error" ? state.message : state.kind === "ready" ? "Saved in the Renders folder of your saved sounds when you drag it out" : undefined}
       onDragStart={(e) => {
         e.preventDefault();
-        if (state.kind === "original") dragOut([state.path]);
+        if (state.kind === "original") dragOut([state.path], [row.id]);
         else dragSample(row);
       }}
       className={cx(

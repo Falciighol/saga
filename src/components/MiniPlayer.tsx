@@ -206,7 +206,7 @@ function MiniDrag({ row }: { row: SampleRow }) {
       title={state.kind === "rendering" ? "Rendering…" : processing?.processed ? `Drag the processed clip (${processing.label})` : "Drag into your DAW"}
       onDragStart={(e) => {
         e.preventDefault();
-        if (state.kind === "original") dragOut([state.path]);
+        if (state.kind === "original") dragOut([state.path], [row.id]);
         else dragSample(row);
       }}
       className={cx("flex h-8 shrink-0 cursor-grab items-center gap-1.5 rounded-[7px] border border-line2 bg-raised pr-2.5 pl-2 text-small font-semibold active:cursor-grabbing", state.kind === "rendering" && "animate-soft-pulse")}
