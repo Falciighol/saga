@@ -46,7 +46,7 @@ named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem M
   compatibility, length, channels, format, sample rate and tags. Histograms show how your library
   is spread before you pick a range.
 - **Organize** with favorites, collections (right-click a sample, or drop samples on a
-  collection) and your own tags.
+  collection; `⌫` takes them out again) and your own tags.
 - **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
   tempo, rename them, favorite or collect them, or drag them all into your DAW at once.
 - **Audition** by selecting: loops repeat, click the waveform to seek, and choose the output
@@ -190,6 +190,7 @@ On Windows, use Ctrl where these say ⌘.
 | `Space` / `Enter` | Play or pause / play from the start |
 | `←` | Back to the start |
 | `F` / `L` | Favorite / toggle looping |
+| `⌫` | Remove from the open collection |
 | `⌘K` (or `⌘F`, `/`) | Search |
 | `⌘⇧F` | Filters |
 | `Esc` | Clear the selection or search, close the editor, or stop |

@@ -1,13 +1,13 @@
 import { useEffect, type RefObject } from "react";
 import { hasMod, isTextInput } from "../lib/platform";
 import { useMenu } from "../components/Menu";
-import { useBrowse } from "../store/browse";
+import { targetIds, useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
 import { shouldLoop, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { editFor, stepPitch, useEdits, useProject } from "../store/project";
 import { useTapTempo } from "../components/ProjectControls";
-import { findSimilar } from "../lib/actions";
+import { findSimilar, removeFromCollection } from "../lib/actions";
 import { stepScale } from "../lib/scale";
 import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
 import { scaleChords } from "../lib/theory";
@@ -140,6 +140,12 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
+      // In a collection's list, ⌫ (Delete on a Mac keyboard) takes the selected or picked samples out of it.
+      if ((e.key === "Backspace" || e.key === "Delete") && browse.view.type === "collection" && (ui.view === "list" || ui.mini) && !editing) {
+        e.preventDefault();
+        void removeFromCollection(browse.view.id, targetIds(browse));
+        return;
+      }
       if (e.key === " ") {
         e.preventDefault();
         player.toggle(row);

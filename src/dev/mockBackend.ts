@@ -782,6 +782,9 @@ export function installMockBackend() {
         case "add_to_collection":
           for (const id of args.ids as number[]) members.get(args.collectionId as number)?.add(id);
           return null;
+        case "remove_from_collection":
+          for (const id of args.ids as number[]) members.get(args.collectionId as number)?.delete(id);
+          return null;
         case "sample_collections":
           return [...members.entries()].filter(([, s]) => s.has(args.id as number)).map(([c]) => c);
         case "play": {

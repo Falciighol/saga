@@ -379,6 +379,7 @@ const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
       [["←"], "Back to the start"],
       [["F"], "Favorite"],
       [["L"], "Toggle looping"],
+      [["⌫"], "Remove from the open collection"],
       [[`${modKey} K`, "/"], "Search"],
       [[`${modKey} ⇧ F`], "Open filters"],
       [["Esc"], "Clear the selection or search, close the editor, or stop"],

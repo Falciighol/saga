@@ -193,11 +193,8 @@ export function pickedMenu(): MenuItem[] {
           {
             label: "Remove from this collection",
             icon: <ListMinus size={14} />,
-            onSelect: async () => {
-              await api.removeFromCollection(view.id, ids);
-              await useLibrary.getState().refreshCollections();
-              useBrowse.getState().refresh();
-            },
+            hint: "⌫",
+            onSelect: () => void removeFromCollection(view.id, ids),
           } as MenuItem,
         ]
       : []),
@@ -255,6 +252,31 @@ export async function addToCollection(collectionId: number, ids: number[]) {
     await useLibrary.getState().refreshCollections();
     const name = useLibrary.getState().collections.find((c) => c.id === collectionId)?.name;
     toast(`Added to ${name ?? "collection"}`, "info");
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/** Takes samples out of a collection (the files and the rest of the library aren't touched), with Undo. */
+export async function removeFromCollection(collectionId: number, ids: number[]) {
+  if (!ids.length) return;
+  const refresh = async () => {
+    await useLibrary.getState().refreshCollections();
+    useBrowse.getState().refresh();
+  };
+  try {
+    await api.removeFromCollection(collectionId, ids);
+    if (ids.length > 1) useBrowse.getState().clearPicked();
+    await refresh();
+    const name = useLibrary.getState().collections.find((c) => c.id === collectionId)?.name;
+    toast(`Removed ${count(ids.length, "sample")} from ${name ?? "the collection"}`, "info", {
+      label: "Undo",
+      run: () =>
+        void api
+          .addToCollection(collectionId, ids)
+          .then(refresh)
+          .catch((e) => toast(errorMessage(e))),
+    });
   } catch (e) {
     toast(errorMessage(e));
   }
@@ -326,11 +348,8 @@ export function sampleMenu(row: SampleRow, index: number): MenuItem[] {
           {
             label: "Remove from this collection",
             icon: <ListMinus size={14} />,
-            onSelect: async () => {
-              await api.removeFromCollection(view.id, [row.id]);
-              await useLibrary.getState().refreshCollections();
-              useBrowse.getState().refresh();
-            },
+            hint: "⌫",
+            onSelect: () => void removeFromCollection(view.id, [row.id]),
           } as MenuItem,
         ]
       : []),
