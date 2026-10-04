@@ -151,6 +151,19 @@ pub async fn get_sample(state: State<'_, AppState>, id: i64) -> CmdResult<Option
     state.db.sample(id).map_err(err)
 }
 
+/// Ids of every sample the filters match, for selecting them all.
+#[tauri::command]
+pub async fn query_ids(state: State<'_, AppState>, filters: Filters) -> CmdResult<Vec<i64>> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.matching_ids(&filters)).await.map_err(err)?.map_err(err)
+}
+
+/// Rows for these ids, in the same order (ones no longer in the library are left out).
+#[tauri::command]
+pub async fn get_samples(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<Vec<SampleRow>> {
+    state.db.samples_by_ids(&ids).map_err(err)
+}
+
 #[tauri::command]
 pub async fn library_stats(state: State<'_, AppState>) -> CmdResult<LibraryStats> {
     state.db.stats().map_err(err)
@@ -170,6 +183,148 @@ pub async fn set_favorite(state: State<'_, AppState>, ids: Vec<i64>, favorite: b
 pub async fn set_user_tags(state: State<'_, AppState>, id: i64, tags: Vec<String>) -> CmdResult<Option<SampleRow>> {
     state.db.set_user_tags(id, &tags).map_err(err)?;
     state.db.sample(id).map_err(err)
+}
+
+/// Sets the tempo and/or key of these samples by hand (or puts back what Saga found), and
+/// returns them as they are now.
+#[tauri::command]
+pub async fn set_sample_values(state: State<'_, AppState>, ids: Vec<i64>, tempo: Option<TempoChange>, key: Option<KeyChange>) -> CmdResult<Vec<SampleRow>> {
+    if let Some(TempoChange::Bpm { bpm }) = tempo {
+        if !(bpm.is_finite() && (20.0..=999.0).contains(&bpm)) {
+            return Err("Enter a tempo between 20 and 999 BPM".into());
+        }
+    }
+    if let Some(KeyChange::Key { pc, mode }) = key {
+        if pc > 11 || mode > 2 {
+            return Err("That isn't a key".into());
+        }
+    }
+    let tempo = match tempo {
+        // Two decimals is as fine as tempos get written.
+        Some(TempoChange::Bpm { bpm }) => Some(TempoChange::Bpm { bpm: (bpm * 100.0).round() / 100.0 }),
+        t => t,
+    };
+    if state.db.set_user_values(&ids, tempo.as_ref(), key.as_ref()).map_err(err)? {
+        state.indexer.queue_pending();
+    }
+    state.db.samples_by_ids(&ids).map_err(err)
+}
+
+/// Folder names left out of every library folder.
+#[tauri::command]
+pub async fn excluded_names(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
+    Ok(state.indexer.excluded_names())
+}
+
+#[tauri::command]
+pub async fn set_excluded_names(state: State<'_, AppState>, names: Vec<String>) -> CmdResult<Vec<String>> {
+    state.indexer.set_excluded_names(&names)
+}
+
+fn secs(t: std::io::Result<std::time::SystemTime>) -> Option<i64> {
+    t.ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64)
+}
+
+/// When these samples' files were created and last changed, for naming them by date.
+#[tauri::command]
+pub async fn file_dates(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<Vec<FileDates>> {
+    let rows = state.db.samples_by_ids(&ids).map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        rows.iter()
+            .map(|r| {
+                let md = std::fs::metadata(&r.path).ok();
+                let modified = md.as_ref().and_then(|m| secs(m.modified()));
+                FileDates { id: r.id, created: md.as_ref().and_then(|m| secs(m.created())).or(modified), modified }
+            })
+            .collect()
+    })
+    .await
+    .map_err(err)
+}
+
+/// A new file name (without its extension) as typed, or why it can't be one on macOS or Windows.
+fn valid_name(name: &str) -> Result<String, String> {
+    let n = name.trim();
+    if n.is_empty() {
+        return Err("The new name is empty".into());
+    }
+    if n.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
+        return Err("Names can't contain / \\ : * ? \" < > |".into());
+    }
+    if n.starts_with('.') || n.ends_with('.') {
+        return Err("Names can't start or end with a dot".into());
+    }
+    if n.len() > 200 {
+        return Err("That name is too long".into());
+    }
+    let upper = n.to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str())
+        || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        return Err("Windows keeps that name for itself".into());
+    }
+    Ok(n.to_string())
+}
+
+/// Renames one sample's file in its folder, and Ableton's analysis file next to it.
+fn rename_file(db: &crate::db::Db, row: &SampleRow, name: &str) -> Result<String, String> {
+    if !row.online {
+        return Err("This sample's drive isn't connected".into());
+    }
+    let new = valid_name(name)?;
+    if new == row.name {
+        return Ok(new);
+    }
+    let old_path = PathBuf::from(&row.path);
+    if !old_path.is_file() {
+        return Err("The file isn't there any more".into());
+    }
+    // Keep the extension exactly as it was ("WAV" stays "WAV").
+    let file_name = match old_path.extension() {
+        Some(ext) => format!("{new}.{}", ext.to_string_lossy()),
+        None => new.clone(),
+    };
+    let new_path = old_path.with_file_name(&file_name);
+    // On a drive that ignores case, a change of case alone names the same file.
+    let same_file = new_path.to_string_lossy().to_lowercase() == old_path.to_string_lossy().to_lowercase();
+    if new_path.exists() && !same_file {
+        return Err(format!("There's already a file called {file_name}"));
+    }
+    std::fs::rename(&old_path, &new_path).map_err(|e| format!("Couldn't rename it: {e}"))?;
+    let new_str = new_path.to_string_lossy().to_string();
+    if let Err(e) = db.rename_sample(row.id, &new_str, &new) {
+        let _ = std::fs::rename(&new_path, &old_path);
+        return Err(e.to_string());
+    }
+    let sidecar = |p: &Path| PathBuf::from(format!("{}.asd", p.to_string_lossy()));
+    let (old_asd, new_asd) = (sidecar(&old_path), sidecar(&new_path));
+    if old_asd.is_file() && !new_asd.exists() {
+        let _ = std::fs::rename(old_asd, new_asd);
+    }
+    Ok(new)
+}
+
+/// Renames sample files where they are. Each sample keeps its favorite, tags, collections and
+/// edits. Only ever run when asked, from the rename dialog.
+#[tauri::command]
+pub async fn rename_samples(state: State<'_, AppState>, renames: Vec<RenameRequest>) -> CmdResult<Vec<RenameOutcome>> {
+    let ids: Vec<i64> = renames.iter().map(|r| r.id).collect();
+    let rows: HashMap<i64, SampleRow> = state.db.samples_by_ids(&ids).map_err(err)?.into_iter().map(|r| (r.id, r)).collect();
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        renames
+            .iter()
+            .map(|r| match rows.get(&r.id) {
+                Some(row) => match rename_file(&db, row, &r.name) {
+                    Ok(to) => RenameOutcome { id: r.id, from: row.name.clone(), to, error: None },
+                    Err(e) => RenameOutcome { id: r.id, from: row.name.clone(), to: r.name.clone(), error: Some(e) },
+                },
+                None => RenameOutcome { id: r.id, from: String::new(), to: r.name.clone(), error: Some("No longer in the library".into()) },
+            })
+            .collect()
+    })
+    .await
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -272,12 +427,12 @@ pub async fn stop_sequence(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
-/// Writes a progression as a MIDI clip into ~/Music/Saga/Renders for dragging into a DAW, and
+/// Writes a progression as a MIDI clip into the saved sounds folder's Renders for dragging into a DAW, and
 /// returns its path. The same clip dragged again reuses its file.
 #[tauri::command]
 pub async fn save_midi(state: State<'_, AppState>, notes: Vec<SeqNote>, beats: f64, bpm: f64, name: String, label: String) -> CmdResult<String> {
     let bytes = crate::midi::write_midi(&notes, beats, bpm, &name);
-    let dir = state.music_dir.join(render::RENDERS_DIR);
+    let dir = state.saved_root().join(render::RENDERS_DIR);
     let path = write_once(&dir, &file_name(&name, &label, "mid"), &bytes)?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -286,23 +441,90 @@ fn stem_of(path: &Path) -> String {
     path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "Sample".into())
 }
 
-/// Renders the processed sample for dragging out; identical requests reuse the earlier file.
+fn path_strings(paths: &[PathBuf]) -> Vec<String> {
+    paths.iter().map(|p| p.to_string_lossy().to_string()).collect()
+}
+
+/// Renders the processed sample; identical requests reuse the earlier file. Renders made ahead of
+/// time (`keep` false) go to scratch; dragging one out (`keep` true) moves it into the saved sounds
+/// folder's Renders, where DAW projects can rely on it.
 #[tauri::command]
-pub async fn render_sample(state: State<'_, AppState>, id: i64, params: ProcessParams, label: String) -> CmdResult<String> {
+pub async fn render_sample(state: State<'_, AppState>, id: i64, params: ProcessParams, label: String, keep: bool) -> CmdResult<String> {
     let src = source_path(&state, id)?;
     let key = render_key(&src, &params);
+    let name = render_name(&stem_of(&src), &label);
+    let renders = state.saved_root().join(render::RENDERS_DIR);
     if let Some(existing) = state.db.render_for(&key).map_err(err)? {
-        if Path::new(&existing).exists() {
-            return Ok(existing);
+        let existing = PathBuf::from(existing);
+        if existing.exists() {
+            if !keep || !existing.starts_with(&state.scratch_renders) {
+                return Ok(existing.to_string_lossy().to_string());
+            }
+            let kept = render::keep(&existing, &renders, &name)?.to_string_lossy().to_string();
+            state.db.remember_render(&key, &kept).map_err(err)?;
+            return Ok(kept);
         }
     }
-    let dir = state.music_dir.join(render::RENDERS_DIR);
-    let dest = free_path(&dir, &render_name(&stem_of(&src), &label));
+    let scratch = state.scratch_renders.clone();
+    let dest = free_path(if keep { &renders } else { &scratch }, &name);
     let (src2, dest2, p) = (src.clone(), dest.clone(), params.clone());
-    tauri::async_runtime::spawn_blocking(move || render_to(&src2, &p, &dest2)).await.map_err(err)??;
+    let pruned = tauri::async_runtime::spawn_blocking(move || {
+        render_to(&src2, &p, &dest2)?;
+        Ok::<_, String>(if keep { Vec::new() } else { render::prune_scratch(&scratch, render::SCRATCH_MAX_AGE, render::SCRATCH_MAX_BYTES, Some(&dest2)) })
+    })
+    .await
+    .map_err(err)??;
+    state.db.forget_renders(&path_strings(&pruned)).map_err(err)?;
     let dest = dest.to_string_lossy().to_string();
     state.db.remember_render(&key, &dest).map_err(err)?;
     Ok(dest)
+}
+
+/// How much space renders take in the saved sounds folder (and in scratch).
+#[tauri::command]
+pub async fn renders_usage(state: State<'_, AppState>) -> CmdResult<render::RendersUsage> {
+    let (dir, scratch) = (state.saved_root().join(render::RENDERS_DIR), state.scratch_renders.clone());
+    tauri::async_runtime::spawn_blocking(move || render::usage(&dir, &scratch)).await.map_err(err)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearedRenders {
+    cleared: render::FileCount,
+    /// Files the Trash wouldn't take (in use, say).
+    failed: u64,
+    usage: render::RendersUsage,
+}
+
+/// Moves renders last changed more than `older_than_days` ago (all of them for `None`) to the Trash,
+/// and deletes every render made ahead of time.
+#[tauri::command]
+pub async fn clear_renders(state: State<'_, AppState>, older_than_days: Option<u32>) -> CmdResult<ClearedRenders> {
+    let (dir, scratch) = (state.saved_root().join(render::RENDERS_DIR), state.scratch_renders.clone());
+    let (gone, cleared, failed, trash_err, usage) = tauri::async_runtime::spawn_blocking(move || {
+        let files = render::older_than(&dir, older_than_days);
+        let trash_err = render::move_to_trash(&files.iter().map(|f| f.path.clone()).collect::<Vec<_>>()).err();
+        let mut gone = render::prune_scratch(&scratch, std::time::Duration::ZERO, 0, None);
+        let (mut cleared, mut failed) = (render::FileCount::default(), 0);
+        // The Trash can take some files and refuse others, so look at what's actually left.
+        for f in files {
+            if f.path.exists() {
+                failed += 1;
+            } else {
+                cleared.files += 1;
+                cleared.bytes += f.bytes;
+                gone.push(f.path);
+            }
+        }
+        (gone, cleared, failed, trash_err, render::usage(&dir, &scratch))
+    })
+    .await
+    .map_err(err)?;
+    state.db.forget_renders(&path_strings(&gone)).map_err(err)?;
+    match trash_err {
+        Some(e) if cleared.files == 0 => Err(format!("Couldn't move renders to the Trash: {e}")),
+        _ => Ok(ClearedRenders { cleared, failed, usage }),
+    }
 }
 
 #[tauri::command]
@@ -313,18 +535,19 @@ pub async fn export_sample(state: State<'_, AppState>, id: i64, params: ProcessP
     Ok(())
 }
 
-/// Renders into ~/Music/Saga/Variations, which is kept in the library so variations are searchable.
+/// Renders into the saved sounds folder's Variations, which is kept in the library so variations are searchable.
 #[tauri::command]
 pub async fn save_variation(state: State<'_, AppState>, id: i64, params: ProcessParams, label: String) -> CmdResult<String> {
     let src = source_path(&state, id)?;
-    let dir = state.music_dir.join(render::VARIATIONS_DIR);
+    let dir = state.saved_root().join(render::VARIATIONS_DIR);
     std::fs::create_dir_all(&dir).map_err(err)?;
     let dest = free_path(&dir, &render_name(&stem_of(&src), &label));
     let dest2 = dest.clone();
     tauri::async_runtime::spawn_blocking(move || render_to(&src, &params, &dest2)).await.map_err(err)??;
     let dir_str = dir.to_string_lossy().to_string();
     let sources = state.db.sources().map_err(err)?;
-    match sources.iter().find(|s| s.path == dir_str) {
+    // A library folder that already holds this one (or is it) picks the new file up with a rescan.
+    match sources.iter().find(|s| Path::new(&dir_str).starts_with(&s.path)) {
         Some(s) => state.indexer.rescan(s.id),
         None => {
             state.indexer.add_source(&dir_str, &[])?;
@@ -424,6 +647,43 @@ pub async fn list_installed_fonts() -> CmdResult<Vec<crate::fonts::InstalledFont
 #[tauri::command]
 pub async fn drag_icon(state: State<'_, AppState>) -> CmdResult<String> {
     Ok(state.drag_icon.to_string_lossy().to_string())
+}
+
+/// Where renders, Lab clips and saved variations go.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedSounds {
+    path: String,
+    /// True while it's the default (~/Music/Saga).
+    is_default: bool,
+}
+
+fn saved_sounds(state: &AppState) -> SavedSounds {
+    let root = state.saved_root();
+    let _ = std::fs::create_dir_all(&root);
+    SavedSounds { is_default: root == state.default_saved_root(), path: root.to_string_lossy().to_string() }
+}
+
+/// The saved sounds folder, made if it isn't there yet.
+#[tauri::command]
+pub async fn saved_sounds_dir(state: State<'_, AppState>) -> CmdResult<SavedSounds> {
+    Ok(saved_sounds(&state))
+}
+
+/// Moves where new renders and variations are saved; `None` goes back to the default. Files already
+/// saved stay where they are, since projects may refer to them by path.
+#[tauri::command]
+pub async fn set_saved_sounds_dir(state: State<'_, AppState>, path: Option<String>) -> CmdResult<SavedSounds> {
+    let value = match path.as_deref().map(|p| p.trim_end_matches(['/', '\\'])) {
+        Some(p) if !p.is_empty() && Path::new(p) != state.default_saved_root() => {
+            let probe = Path::new(p).join(render::RENDERS_DIR);
+            std::fs::create_dir_all(&probe).map_err(|_| "Saga can't save into that folder".to_string())?;
+            Some(p.to_string())
+        }
+        _ => None,
+    };
+    state.db.set_setting(crate::SAVED_SOUNDS_SETTING, value.as_deref()).map_err(err)?;
+    Ok(saved_sounds(&state))
 }
 
 #[derive(Serialize)]
@@ -707,4 +967,62 @@ pub async fn set_ui_scale<R: Runtime>(window: WebviewWindow<R>, state: State<'_,
     let mini = state.full_window.lock().is_some();
     let min = if mini { (MINI_MIN_WIDTH, MINI_MIN_HEIGHT) } else { FULL_MIN };
     fit_min_size(&window, scaled(&window, zoom, min)).map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{Db, ScannedFile};
+
+    #[test]
+    fn names_that_cannot_be_file_names() {
+        assert_eq!(valid_name("  Loop_124_Am "), Ok("Loop_124_Am".into()));
+        assert_eq!(valid_name("Kick 124.5 BPM"), Ok("Kick 124.5 BPM".into()));
+        for bad in ["", "   ", "a/b", "a\\b", "what?", "a:b", ".hidden", "trailing.", "con", "LPT1"] {
+            assert!(valid_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(valid_name("Console").is_ok() && valid_name("COM10").is_ok());
+    }
+
+    #[test]
+    fn renames_files_where_they_are() {
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let dir = lib.path().join("Pack");
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["Bass Loop.WAV", "Bass Loop.WAV.asd", "Taken_120_C.WAV", "Kick.wav"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        let db = Db::open(&data.path().join("t.db")).unwrap();
+        let src = db.add_source(&lib.path().to_string_lossy()).unwrap();
+        let file = |name: &str, ext: &str| ScannedFile {
+            path: dir.join(format!("{name}.{ext}")).to_string_lossy().to_string(),
+            dir: "Pack".into(),
+            name: name.into(),
+            ext: ext.to_lowercase(),
+            size: 1,
+            mtime: 1,
+            existing: None,
+        };
+        db.upsert_files(src, "lib", &[file("Bass Loop", "WAV"), file("Kick", "wav")]).unwrap();
+        let ids = db.ids_for_paths(&[dir.join("Bass Loop.WAV").to_string_lossy().to_string(), dir.join("Kick.wav").to_string_lossy().to_string()]).unwrap();
+        let rows = db.samples_by_ids(&ids).unwrap();
+
+        // The extension stays as it was, and Ableton's analysis file follows the sample.
+        assert_eq!(rename_file(&db, &rows[0], "Bass Loop_120_C"), Ok("Bass Loop_120_C".into()));
+        assert!(dir.join("Bass Loop_120_C.WAV").is_file() && dir.join("Bass Loop_120_C.WAV.asd").is_file());
+        assert!(!dir.join("Bass Loop.WAV").exists() && !dir.join("Bass Loop.WAV.asd").exists());
+        let row = db.sample(ids[0]).unwrap().unwrap();
+        assert_eq!((row.name.as_str(), row.path.clone()), ("Bass Loop_120_C", dir.join("Bass Loop_120_C.WAV").to_string_lossy().to_string()));
+
+        // Another file already has the name: nothing changes.
+        assert!(rename_file(&db, &row, "Taken_120_C").unwrap_err().contains("already a file"));
+        assert!(dir.join("Bass Loop_120_C.WAV").is_file());
+        // A change of case alone works, even where the drive ignores case.
+        assert_eq!(rename_file(&db, &rows[1], "KICK"), Ok("KICK".into()));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("kick.wav")).map(|e| e.file_name().to_string_lossy().to_string()).collect::<Vec<_>>(), vec!["KICK.wav"]);
+        // Unchanged names are left alone.
+        let kick = db.sample(ids[1]).unwrap().unwrap();
+        assert_eq!(rename_file(&db, &kick, " KICK "), Ok("KICK".into()));
+    }
 }

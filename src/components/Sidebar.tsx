@@ -67,6 +67,15 @@ function NavItem({
   );
 }
 
+/** After folders have left the library: if one is on show (or one inside it), step out to its parent; otherwise refresh the list. */
+export function afterExcluded(sourceId: number, dirs: string[]) {
+  const browse = useBrowse.getState();
+  const v = browse.view;
+  const hit = v.type === "folder" && v.sourceId === sourceId ? dirs.find((d) => v.dir === d || v.dir.startsWith(`${d}/`)) : undefined;
+  if (hit !== undefined) browse.setView({ type: "folder", sourceId, dir: hit.split("/").slice(0, -1).join("/") });
+  else browse.refresh();
+}
+
 /** Leaves a subfolder out of the library, after saying what that takes with it. */
 function excludeFolder(source: SourceInfo, node: DirNode) {
   useConfirm.getState().ask({
@@ -81,12 +90,7 @@ function excludeFolder(source: SourceInfo, node: DirNode) {
     danger: true,
     onConfirm: async () => {
       if (!(await useLibrary.getState().setExcluded(source.id, node.dir, true))) return;
-      const browse = useBrowse.getState();
-      const v = browse.view;
-      // Showing the folder that just left (or one inside it): step out to its parent.
-      if (v.type === "folder" && v.sourceId === source.id && (v.dir === node.dir || v.dir.startsWith(`${node.dir}/`))) {
-        browse.setView({ type: "folder", sourceId: source.id, dir: node.dir.split("/").slice(0, -1).join("/") });
-      } else browse.refresh();
+      afterExcluded(source.id, [node.dir]);
       toast(`“${node.name}” is excluded. Right-click “${source.name}” to include it again.`, "info");
     },
   });

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ESTIMATE, fmtBpm } from "../../lib/format";
-import { camelot } from "../../lib/keys";
+import { applyValues } from "../../lib/actions";
+import { ESTIMATE, fmtBpm, hasTempo } from "../../lib/format";
+import { camelot, keyName } from "../../lib/keys";
 import { isPlain, noteFrom, rankKeys, rankScales, rootName, scaleNotes, sharpName, type KeyMatch } from "../../lib/theory";
 import type { SampleRow } from "../../lib/types";
 import { useBrowse } from "../../store/browse";
@@ -152,10 +153,40 @@ function PlayAlong({ match }: { match: KeyMatch }) {
 
 function sampleDetail(row: SampleRow): string {
   const parts = [row.pack];
-  if (row.kind === "loop" && row.bpm) parts.push(`${fmtBpm(row.bpm)} BPM`);
-  const from: Record<string, string> = { name: `${row.key} in its name`, metadata: `${row.key} in its loop data`, audio: `${ESTIMATE}${row.key}, detected` };
+  if (hasTempo(row)) parts.push(`${fmtBpm(row.bpm)} BPM`);
+  const from: Record<string, string> = { name: `${row.key} in its name`, metadata: `${row.key} in its loop data`, audio: `${ESTIMATE}${row.key}, detected`, user: `${row.key}, set by you` };
   parts.push(row.key ? (from[row.keySource ?? ""] ?? row.key) : "no key in its name or tags");
   return parts.join(" · ");
+}
+
+/** Writes the key found here onto the sample, so its Key column, filters and key matching use it. */
+function UseAsKey({ row, pc, mode }: { row: SampleRow; pc: number; mode: 0 | 1 }) {
+  const name = keyName(pc, mode);
+  const already = row.keyPc === pc && row.keyMode === mode;
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <SectionLabel>This sample</SectionLabel>
+        <span className="truncate text-small text-text3">{row.key ? `Shown as ${keyText(row)}` : "No key yet"}</span>
+      </div>
+      <button
+        type="button"
+        disabled={already}
+        onClick={() => void applyValues([row.id], { key: { to: "key", pc, mode } })}
+        title="Shows this key in the list and uses it for filters and key matching. The file isn't changed."
+        className={cx(
+          "h-8 self-start rounded-lg px-3 text-ui transition-colors",
+          already ? "border border-accent bg-accent-soft text-accent-ink" : "border border-line2 text-text2 hover:bg-raised hover:text-text",
+        )}
+      >
+        {already ? `${name} is its key` : `Use ${name} as its key`}
+      </button>
+    </section>
+  );
+}
+
+function keyText(row: SampleRow): string {
+  return `${row.keySource === "audio" ? ESTIMATE : ""}${row.key}${row.keySource === "user" ? ", set by you" : ""}`;
 }
 
 export function KeyFinder() {
@@ -257,7 +288,7 @@ export function KeyFinder() {
                         m={m}
                         rank={i + 1}
                         on={m === match}
-                        note={tag && tag.pc === m.pc && tag.mode === m.scale.mode ? (row?.keySource === "audio" ? "detected" : "tagged") : undefined}
+                        note={tag && tag.pc === m.pc && tag.mode === m.scale.mode ? (row?.keySource === "audio" ? "detected" : row?.keySource === "user" ? "yours" : "tagged") : undefined}
                         onPick={() => pick(m)}
                       />
                     ))}
@@ -283,6 +314,7 @@ export function KeyFinder() {
                       <b className="font-semibold text-text">{matchName(match)}.</b>{" "}
                       {match.scale.feel}
                     </p>
+                    {row && <UseAsKey row={row} pc={match.pc} mode={match.scale.mode} />}
                     <KeyActions pc={match.pc} scale={match.scale} />
                     <button
                       type="button"

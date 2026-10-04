@@ -1,13 +1,15 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp, Pause, Play, Star } from "lucide-react";
 import { memo, useEffect, useMemo, useRef } from "react";
-import { dragSample, sampleMenu } from "../lib/actions";
-import { bpmText, fmtLength, keyText, sourceHint } from "../lib/format";
+import { dragSample, dragSamples, pickedMenu, sampleMenu } from "../lib/actions";
+import { bpmText, fmtLength, hasTempo, keyText, sourceHint } from "../lib/format";
+import { hasMod } from "../lib/platform";
 import { compatibleKeys } from "../lib/keys";
 import { fittingKeys, plainScale, scaleById, scaleNotes } from "../lib/theory";
 import type { SampleRow, SortKey } from "../lib/types";
-import { activeFilterCount, useBrowse } from "../store/browse";
+import { activeFilterCount, targetRows, useBrowse } from "../store/browse";
 import { usePlayer } from "../store/player";
+import { usePrefs } from "../store/prefs";
 import { useProject } from "../store/project";
 import { openContextMenu } from "./Menu";
 import { cx } from "./ui";
@@ -53,26 +55,40 @@ function useKeyMatcher() {
 
 const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { row: SampleRow; index: number; keyMatch: boolean | null }) {
   const selected = useBrowse((s) => s.selected?.id === row.id);
+  const picked = useBrowse((s) => s.picked.has(row.id));
+  const bpmFixed = usePrefs((s) => s.bpmFixed);
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const playing = status === "playing" || status === "loading";
   const segments = row.dir.split("/").filter(Boolean);
   const where = segments.length > 1 ? `${segments[0]}  ›  ${segments[segments.length - 1]}` : row.pack;
 
   const select = (play?: boolean) => useBrowse.getState().selectRow(row, index, play === undefined ? undefined : { play });
+  // Acting on a row that's among the picked ones acts on all of them.
+  const inPicked = () => useBrowse.getState().picked.has(row.id);
+  const tempo = bpmText(row, bpmFixed);
 
   return (
     <div
       draggable={row.online}
       onDragStart={(e) => {
         e.preventDefault();
+        if (inPicked()) {
+          void targetRows().then(dragSamples);
+          return;
+        }
         select(false);
         dragSample(row);
       }}
       onContextMenu={(e) => {
+        if (inPicked()) {
+          openContextMenu(e, pickedMenu());
+          return;
+        }
         select(false);
         openContextMenu(e, sampleMenu(row, index));
       }}
-      className={cx("group flex h-11 items-center gap-1 px-4", selected ? "bg-raised" : "hover:bg-raised/60", !row.online && "opacity-45")}
+      aria-selected={selected || picked}
+      className={cx("group flex h-11 items-center gap-1 px-4", picked ? "bg-accent-soft" : selected ? "bg-raised" : "hover:bg-raised/60", !row.online && "opacity-45")}
       title={row.online ? undefined : "This sample's drive isn't connected"}
     >
       <button
@@ -97,8 +113,13 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
       </button>
       <button
         type="button"
-        onClick={() => select()}
-        onDoubleClick={() => usePlayer.getState().play(row)}
+        onClick={(e) => {
+          const browse = useBrowse.getState();
+          if (e.shiftKey) void browse.pickRange(index, hasMod(e));
+          else if (hasMod(e)) browse.togglePick(row, index);
+          else select();
+        }}
+        onDoubleClick={(e) => !e.shiftKey && !hasMod(e) && usePlayer.getState().play(row)}
         className="flex h-11 min-w-0 flex-1 items-center gap-4 pl-1 text-left"
       >
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -121,9 +142,9 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
         <span
           className="shrink-0 text-right font-mono text-small text-text2 tabular"
           style={{ width: COLS.bpm }}
-          title={row.kind === "loop" ? sourceHint("Tempo", row.bpmSource) : undefined}
+          title={hasTempo(row) ? sourceHint("Tempo", row.bpmSource) : undefined}
         >
-          {bpmText(row) === "—" ? <span className="text-text3">—</span> : bpmText(row)}
+          {tempo === "—" ? <span className="text-text3">—</span> : tempo}
         </span>
         <span
           className="flex shrink-0 items-center gap-[7px] font-mono text-small text-text2"

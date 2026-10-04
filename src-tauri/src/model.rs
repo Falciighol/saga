@@ -39,7 +39,7 @@ pub struct SampleRow {
     pub channels: Option<i64>,
     pub bit_depth: Option<i64>,
     pub bpm: Option<f64>,
-    /// "name", "metadata", "audio" (detected, so an estimate) or null.
+    /// "name", "metadata", "audio" (detected, so an estimate), "user" (set by hand) or null.
     pub bpm_source: Option<&'static str>,
     pub key: Option<String>,
     /// Like `bpm_source`.
@@ -60,6 +60,55 @@ pub struct SampleRow {
     pub favorite: bool,
     pub online: bool,
     pub play_count: i64,
+}
+
+/// A tempo set by hand: `{ "to": "bpm", "bpm": 124 }`, `{ "to": "noTempo" }`, or back to what
+/// Saga found with `{ "to": "detected" }`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "to")]
+pub enum TempoChange {
+    Bpm { bpm: f64 },
+    NoTempo,
+    Detected,
+}
+
+/// A key set by hand: `{ "to": "key", "pc": 9, "mode": 1 }` (mode 0 major, 1 minor, 2 a single
+/// note), `{ "to": "noKey" }`, or back to what Saga found with `{ "to": "detected" }`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "to")]
+pub enum KeyChange {
+    Key { pc: u8, mode: u8 },
+    NoKey,
+    Detected,
+}
+
+/// What renaming needs to know about a sample's file.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDates {
+    pub id: i64,
+    /// Seconds since 1970; the modified time where the file system doesn't keep a created time.
+    pub created: Option<i64>,
+    pub modified: Option<i64>,
+}
+
+/// A new name (without the extension) for a sample's file.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameRequest {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameOutcome {
+    pub id: i64,
+    /// The name before, to undo with.
+    pub from: String,
+    pub to: String,
+    /// Why it wasn't renamed; null when it was.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]

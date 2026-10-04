@@ -56,6 +56,12 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
         window.setTimeout(() => window.dispatchEvent(new Event("saga:open-filters")), 0);
         return;
       }
+      // Select every sample the search and filters match.
+      if (hasMod(e) && !e.shiftKey && e.key.toLowerCase() === "a" && !typing && ui.view === "list" && !ui.mini && !editing) {
+        e.preventDefault();
+        void browse.pickAll();
+        return;
+      }
       if (hasMod(e) && e.key === ",") {
         e.preventDefault();
         openSettings();
@@ -116,6 +122,8 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       if (e.key === "Escape") {
         if (similar.recording) {
           similar.cancelRecording();
+        } else if (browse.picked.size > 1 && !typing && !onMap) {
+          browse.clearPicked();
         } else if (editing && !typing) {
           useEditor.getState().close();
         } else if (inSearch && browse.text) {

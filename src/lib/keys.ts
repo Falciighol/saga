@@ -11,7 +11,12 @@ export function keyName(pc: number, mode: 0 | 1): string {
 }
 
 export function keyLongName(pc: number, mode: 0 | 1): string {
-  return `${mode === 1 ? LONG_ROOT[pc] : MAJOR[pc]} ${mode === 1 ? "minor" : "major"}`;
+  return `${keyRoot(pc, mode)} ${mode === 1 ? "minor" : "major"}`;
+}
+
+/** The root as a key name spells it: sharps for most minor keys ("F#" in F♯ minor), flats for major ("Db"). */
+export function keyRoot(pc: number, mode: 0 | 1): string {
+  return mode === 1 ? LONG_ROOT[pc] : MAJOR[pc];
 }
 
 const mod = (n: number, m: number) => ((n % m) + m) % m;

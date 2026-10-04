@@ -77,12 +77,57 @@ pub fn skip_name(name: &str, is_dir: bool) -> bool {
     name.starts_with('.') || name == "__MACOSX" || (is_dir && name.ends_with(".app"))
 }
 
-fn skip_entry(e: &walkdir::DirEntry, root: &Path, excluded: &[String]) -> bool {
+/// The setting that holds folder names left out of every library folder, as a JSON list.
+pub const EXCLUDED_NAMES_SETTING: &str = "excluded_folder_names";
+
+/// True when a folder's name matches one of the names left out everywhere: case doesn't matter,
+/// and `*` stands for any run of characters ("Vocal*" matches "Vocals" and "Vocal Stems").
+pub fn name_excluded(name: &str, names: &[String]) -> bool {
+    let name = name.to_lowercase();
+    names.iter().any(|p| glob(&p.to_lowercase(), &name))
+}
+
+fn glob(pattern: &str, s: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = s.strip_prefix(first) else { return false };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else { return rest.is_empty() };
+    for part in middle {
+        match rest.find(part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
+/// True when any folder along `rel` (relative, `/`-separated, all folders) is left out by name.
+fn dirs_excluded(rel: &str, names: &[String]) -> bool {
+    !names.is_empty() && rel.split('/').any(|seg| !seg.is_empty() && name_excluded(seg, names))
+}
+
+/// Cleans up names typed in Settings: trimmed, no paths, no repeats (ignoring case).
+pub fn clean_names(names: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in names {
+        let n = n.trim();
+        if n.is_empty() || n.contains(['/', '\\']) || n.chars().all(|c| c == '*') || out.iter().any(|o| o.eq_ignore_ascii_case(n)) {
+            continue;
+        }
+        out.push(n.to_string());
+    }
+    out
+}
+
+fn skip_entry(e: &walkdir::DirEntry, root: &Path, excluded: &[String], names: &[String]) -> bool {
     if e.depth() == 0 {
         return false;
     }
     let is_dir = e.file_type().is_dir();
-    skip_name(&e.file_name().to_string_lossy(), is_dir)
+    let name = e.file_name().to_string_lossy();
+    skip_name(&name, is_dir)
+        || (is_dir && name_excluded(&name, names))
         || (is_dir && !excluded.is_empty() && rel_path(root, e.path()).is_some_and(|rel| is_excluded(&rel, excluded)))
 }
 
@@ -337,6 +382,33 @@ impl Indexer {
         Ok(())
     }
 
+    /// Folder names left out of every library folder.
+    pub fn excluded_names(&self) -> Vec<String> {
+        self.db.get_setting(EXCLUDED_NAMES_SETTING).and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
+    }
+
+    /// Leaves folders with these names out of every library folder. Samples in folders that now
+    /// match go; folders that no longer match are scanned again. Returns the names as stored.
+    pub fn set_excluded_names(&self, names: &[String]) -> Result<Vec<String>, String> {
+        let names = clean_names(names);
+        let before = self.excluded_names();
+        let value = serde_json::to_string(&names).map_err(|e| e.to_string())?;
+        self.db.set_setting(EXCLUDED_NAMES_SETTING, (!names.is_empty()).then_some(value.as_str())).map_err(|e| e.to_string())?;
+        let has = |list: &[String], n: &String| list.iter().any(|x| x.eq_ignore_ascii_case(n));
+        let added = names.iter().any(|n| !has(&before, n));
+        let removed = before.iter().any(|n| !has(&names, n));
+        // A rescan also drops what it no longer walks into, so it covers newly matching folders too.
+        for s in self.db.sources().map_err(|e| e.to_string())?.iter().filter(|s| s.online) {
+            if removed {
+                self.send(ScanJob::Source(s.id));
+            } else if added {
+                self.send(ScanJob::Prune(s.id));
+            }
+        }
+        self.counters.library_dirty.store(true, Ordering::Relaxed);
+        Ok(names)
+    }
+
     pub fn remove_source(&self, id: i64) -> Result<(), String> {
         self.watchers.lock().remove(&id);
         self.db.remove_source(id).map_err(|e| e.to_string())?;
@@ -391,7 +463,20 @@ impl Indexer {
 
     fn prune(&self, id: i64) {
         let Ok(Some(src)) = self.db.source(id) else { return };
-        for dir in &src.excluded {
+        let mut gone: Vec<String> = src.excluded.clone();
+        // Folders left out by name, wherever they are: the shallowest one covers the rest.
+        let names = self.excluded_names();
+        if !names.is_empty() {
+            for dir in self.db.source_dirs(id).unwrap_or_default() {
+                let segs: Vec<&str> = dir.split('/').collect();
+                if let Some(i) = segs.iter().position(|seg| name_excluded(seg, &names)) {
+                    gone.push(segs[..=i].join("/"));
+                }
+            }
+        }
+        gone.sort();
+        gone.dedup();
+        for dir in &gone {
             if self.db.delete_dir(id, dir).is_ok_and(|n| n > 0) {
                 self.counters.library_dirty.store(true, Ordering::Relaxed);
             }
@@ -410,9 +495,13 @@ impl Indexer {
                 roots.push(p);
             }
         }
+        let names = self.excluded_names();
         for p in roots {
             let Some(rel) = rel_path(&root, &p) else { continue };
-            if rel.split('/').any(|seg| seg.starts_with('.')) || is_excluded(&rel, &src.excluded) {
+            // Only the folders along the path count for names; a file can be called anything.
+            // (A deleted file is still an audio path, so its name doesn't keep its row from going.)
+            let dirs = if p.is_file() || is_audio_path(&p) { rel.rsplit_once('/').map(|(d, _)| d).unwrap_or("") } else { rel.as_str() };
+            if rel.split('/').any(|seg| seg.starts_with('.')) || is_excluded(&rel, &src.excluded) || dirs_excluded(dirs, &names) {
                 continue;
             }
             if p.exists() {
@@ -450,7 +539,8 @@ impl Indexer {
             c.progress_dirty.store(true, Ordering::Relaxed);
         };
 
-        for entry in WalkDir::new(start).follow_links(true).into_iter().filter_entry(|e| !skip_entry(e, root, &src.excluded)) {
+        let names = self.excluded_names();
+        for entry in WalkDir::new(start).follow_links(true).into_iter().filter_entry(|e| !skip_entry(e, root, &src.excluded, &names)) {
             let Ok(entry) = entry else { continue };
             if !entry.file_type().is_file() || !is_audio_path(entry.path()) {
                 continue;
@@ -487,6 +577,12 @@ impl Indexer {
         }
         c.scanning.fetch_sub(1, Ordering::Relaxed);
         c.progress_dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Queues whatever is waiting for analysis, such as samples whose tempo or key went back to
+    /// what Saga finds.
+    pub fn queue_pending(&self) {
+        self.enqueue_pending(None);
     }
 
     fn enqueue_pending(&self, source_id: Option<i64>) {
@@ -652,5 +748,55 @@ mod tests {
         assert_eq!(names(&db), vec!["Bass_Loop_120_Am", "Kick_Flat", "Kick_New", "Kick_Punchy", "Snare_Crack"]);
         assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Demos"]);
         assert!(all(&db).iter().all(|r| r.status == 1), "included samples are analyzed");
+    }
+
+    #[test]
+    fn folder_names_match_ignoring_case_with_wildcards() {
+        let names = clean_names(&["  Vocals ".into(), "vocals".into(), "Stem*".into(), "a/b".into(), "*".into(), "".into()]);
+        assert_eq!(names, vec!["Vocals", "Stem*"]);
+        assert!(name_excluded("VOCALS", &names));
+        assert!(!name_excluded("Vocals 2", &names));
+        assert!(name_excluded("Stems", &names) && name_excluded("stem", &names));
+        assert!(!name_excluded("My Stems", &names));
+        let mid = vec!["*vox*".to_string(), "Old*Takes".to_string()];
+        assert!(name_excluded("Lead Vox Dry", &mid) && name_excluded("vox", &mid));
+        assert!(name_excluded("Old Takes", &mid) && name_excluded("OldTakes", &mid) && !name_excluded("Old Takes 2", &mid));
+        assert!(dirs_excluded("Pack/Vocals/Dry", &names) && !dirs_excluded("Pack/Drums", &names) && !dirs_excluded("", &names));
+    }
+
+    #[test]
+    fn folders_left_out_by_name_everywhere() {
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_wav(&lib.path().join("Pack A/Vocals/Vox_Hey.wav"), 0.3);
+        write_wav(&lib.path().join("Pack A/Drums/Kick.wav"), 0.3);
+        write_wav(&lib.path().join("Pack B/Loops/vocals/Dry/Vox_Ooh.wav"), 0.3);
+        write_wav(&lib.path().join("Pack B/Loops/Bass.wav"), 0.3);
+        // A file can be called anything: names only match folders.
+        write_wav(&lib.path().join("Pack B/Vocals.wav"), 0.3);
+
+        let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
+        let ix = Indexer::start(db.clone(), Arc::new(|_, _| {}));
+        ix.set_excluded_names(&["Vocals".into()]).unwrap();
+        ix.add_source(&lib.path().to_string_lossy(), &[]).unwrap();
+        wait_idle(&ix);
+        let names = |db: &Db| all(db).into_iter().map(|r| r.name).collect::<Vec<_>>();
+        assert_eq!(names(&db), vec!["Bass", "Kick", "Vocals"]);
+
+        // Changes inside a matching folder are passed over too.
+        write_wav(&lib.path().join("Pack A/Vocals/Vox_New.wav"), 0.3);
+        let src = db.sources().unwrap()[0].id;
+        ix.send(ScanJob::Paths(src, vec![lib.path().join("Pack A/Vocals/Vox_New.wav")]));
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass", "Kick", "Vocals"]);
+
+        // Taking the name away brings the folders back; adding another takes its folders out.
+        assert_eq!(ix.set_excluded_names(&[]).unwrap(), Vec::<String>::new());
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass", "Kick", "Vocals", "Vox_Hey", "Vox_New", "Vox_Ooh"]);
+        ix.set_excluded_names(&["dr*".into()]).unwrap();
+        wait_idle(&ix);
+        assert_eq!(names(&db), vec!["Bass", "Vocals", "Vox_Hey", "Vox_New"]);
+        assert_eq!(ix.excluded_names(), vec!["dr*"]);
     }
 }

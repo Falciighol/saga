@@ -3,7 +3,7 @@
 use crate::analysis::{self, AudioInfo};
 use crate::features;
 use crate::keys::{self, Key};
-use crate::meta::{self, Kind, Resolved};
+use crate::meta::{self, Kind, Resolved, UserValues};
 use crate::model::*;
 use crate::query::{self, Omit};
 use base64::Engine as _;
@@ -113,7 +113,15 @@ CREATE TABLE IF NOT EXISTS excluded_dirs (
 "#;
 
 /// Columns added after the first release, with their definitions.
-const ADDED_COLUMNS: &[(&str, &str)] = &[("features", "BLOB"), ("analysis_version", "INTEGER NOT NULL DEFAULT 0")];
+/// `user_*` hold tempo and key set by hand (see `meta::UserValues`): they're copied into `bpm` and
+/// `key_*`, and survive rescans and re-analysis.
+const ADDED_COLUMNS: &[(&str, &str)] = &[
+    ("features", "BLOB"),
+    ("analysis_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("user_bpm", "REAL"),
+    ("user_key_pc", "INTEGER"),
+    ("user_key_mode", "INTEGER"),
+];
 
 const ROW_COLS: &str = "s.id, s.source_id, s.path, s.name, s.ext, s.dir, src.name, s.duration, s.sample_rate, \
     s.channels, s.bit_depth, s.bpm, s.bpm_source, s.key_pc, s.key_mode, s.kind, s.category, s.auto_tags, \
@@ -129,6 +137,7 @@ fn value_source(v: i64) -> Option<&'static str> {
         1 => Some("name"),
         2 => Some("metadata"),
         3 => Some("audio"),
+        4 => Some("user"),
         _ => None,
     }
 }
@@ -175,7 +184,11 @@ fn row_to_sample(r: &Row) -> rusqlite::Result<SampleRow> {
         bpm: r.get(11)?,
         bpm_source: value_source(r.get(12)?),
         key: key.map(|k| k.name().to_string()),
-        key_source: key.and(value_source(r.get(26)?)),
+        // "No key" set by hand says so too.
+        key_source: match r.get::<_, i64>(26)? {
+            4 => Some("user"),
+            s => key.and(value_source(s)),
+        },
         camelot: key.and_then(|k| k.camelot()).map(|(n, l)| format!("{n}{l}")),
         key_pc,
         key_mode,
@@ -195,17 +208,22 @@ fn row_to_sample(r: &Row) -> rusqlite::Result<SampleRow> {
 
 /// Words indexed for full-text search.
 pub fn fts_text(source_name: &str, dir: &str, name: &str, ext: &str, r: &Resolved) -> String {
+    fts_words(source_name, dir, name, ext, r.category, &r.tags, r.kind, r.key)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fts_words<S: AsRef<str>>(source_name: &str, dir: &str, name: &str, ext: &str, category: Option<&str>, tags: &[S], kind: Kind, key: Option<Key>) -> String {
     let mut words = meta::search_words(name);
     for seg in dir.split('/') {
         words.extend(meta::search_words(seg));
     }
     words.extend(meta::search_words(source_name));
-    if let Some(c) = r.category {
+    if let Some(c) = category {
         words.push(c.to_lowercase());
     }
-    words.extend(r.tags.iter().map(|t| t.to_string()));
-    words.push(if r.kind == Kind::Loop { "loop".into() } else { "oneshot one shot".into() });
-    if let Some(k) = r.key {
+    words.extend(tags.iter().map(|t| t.as_ref().to_string()));
+    words.push(if kind == Kind::Loop { "loop".into() } else { "oneshot one shot".into() });
+    if let Some(k) = key {
         words.push(k.name().to_lowercase());
         if let Some((n, l)) = k.camelot() {
             words.push(format!("{n}{}", l.to_ascii_lowercase()));
@@ -213,6 +231,41 @@ pub fn fts_text(source_name: &str, dir: &str, name: &str, ext: &str, r: &Resolve
     }
     words.push(ext.to_string());
     words.join(" ")
+}
+
+/// Rebuilds a sample's indexed text from what's stored, after its name, tempo or key changed.
+fn refresh_fts(conn: &Connection, id: i64) -> DbResult<()> {
+    let row = conn
+        .query_row(
+            "SELECT src.name, s.dir, s.name, s.ext, s.category, s.auto_tags, s.kind, s.key_pc, s.key_mode, s.user_tags \
+             FROM samples s JOIN sources src ON src.id = s.source_id WHERE s.id = ?",
+            [id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?,
+                    Key::from_db(r.get(7)?, r.get(8)?),
+                    r.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((source_name, dir, name, ext, category, auto_tags, kind, key, user_tags)) = row else { return Ok(()) };
+    let kind = if kind == 1 { Kind::Loop } else { Kind::OneShot };
+    let base = fts_words(&source_name, &dir, &name, &ext, category.as_deref(), &split_tags(&auto_tags), kind, key);
+    conn.execute("DELETE FROM samples_fts WHERE rowid = ?", [id])?;
+    conn.execute("INSERT INTO samples_fts(rowid, text) VALUES(?, ?)", params![id, with_user_tags(&base, &user_tags)])?;
+    Ok(())
+}
+
+/// Tempo and key set by hand, from the `user_bpm, user_key_pc, user_key_mode` columns starting at `from`.
+fn user_values(r: &Row, from: usize) -> rusqlite::Result<UserValues> {
+    Ok(UserValues::from_db(r.get(from)?, r.get(from + 1)?, r.get(from + 2)?))
 }
 
 /// Indexed text is the derived words plus any user tags, so both stay searchable across re-analysis.
@@ -330,6 +383,19 @@ impl Db {
         Ok(())
     }
 
+    /// Forgets renders whose files were deleted or moved to the Trash.
+    pub fn forget_renders(&self, paths: &[String]) -> DbResult<()> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut del = tx.prepare("DELETE FROM renders WHERE path = ?")?;
+            for p in paths {
+                del.execute([p])?;
+            }
+        }
+        tx.commit()
+    }
+
     // ---- sources ----
 
     pub fn add_source(&self, path: &str) -> DbResult<i64> {
@@ -432,11 +498,16 @@ impl Db {
             )?;
             let mut fts_del = tx.prepare("DELETE FROM samples_fts WHERE rowid = ?")?;
             let mut fts_ins = tx.prepare("INSERT INTO samples_fts(rowid, text) VALUES(?, ?)")?;
-            let mut user_tags = tx.prepare("SELECT user_tags FROM samples WHERE id = ?")?;
+            let mut stored = tx.prepare("SELECT user_tags, user_bpm, user_key_pc, user_key_mode FROM samples WHERE id = ?")?;
             let added = now();
             for f in files {
                 let dirs: Vec<&str> = f.dir.split('/').filter(|s| !s.is_empty()).collect();
-                let r = meta::resolve(&meta::parse_name(&f.name, &dirs), &Default::default(), None);
+                let mut r = meta::resolve(&meta::parse_name(&f.name, &dirs), &Default::default(), None);
+                let (ut, user) = match f.existing {
+                    Some(id) => stored.query_row([id], |r| Ok((r.get::<_, String>(0)?, user_values(r, 1)?)))?,
+                    None => (",".to_string(), UserValues::default()),
+                };
+                user.apply(&mut r);
                 let (kpc, kmode) = r.key.map(|k| (Some(k.pc as i64), Some(k.mode as i64))).unwrap_or((None, None));
                 let tags = join_tags(&r.tags);
                 let id = match f.existing {
@@ -456,7 +527,6 @@ impl Db {
                         tx.last_insert_rowid()
                     }
                 };
-                let ut: String = user_tags.query_row([id], |r| r.get(0))?;
                 fts_ins.execute(params![id, with_user_tags(&fts_text(source_name, &f.dir, &f.name, &f.ext, &r), &ut)])?;
             }
         }
@@ -570,10 +640,28 @@ impl Db {
             let mut failed = tx.prepare("UPDATE samples SET status = 2, analysis_version = ? WHERE id = ?")?;
             let mut fts_del = tx.prepare("DELETE FROM samples_fts WHERE rowid = ?")?;
             let mut fts_ins = tx.prepare("INSERT INTO samples_fts(rowid, text) VALUES(?, ?)")?;
-            let mut user_tags = tx.prepare("SELECT user_tags FROM samples WHERE id = ?")?;
+            let mut stored = tx.prepare(
+                "SELECT s.user_tags, s.user_bpm, s.user_key_pc, s.user_key_mode, src.name, s.dir, s.name, s.ext \
+                 FROM samples s JOIN sources src ON src.id = s.source_id WHERE s.id = ?",
+            )?;
             for o in outcomes {
                 match &o.result {
-                    Ok((info, r, text)) => {
+                    Ok((info, resolved, text)) => {
+                        let found = stored
+                            .query_row([o.id], |r| {
+                                Ok((r.get::<_, String>(0)?, user_values(r, 1)?, r.get::<_, String>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?))
+                            })
+                            .optional()?;
+                        // Removed while it was being analyzed.
+                        let Some((ut, user, source_name, dir, name, ext)) = found else { continue };
+                        // Tempo and key set by hand stay, and the indexed text follows them.
+                        let mut r = resolved.clone();
+                        let text = if user.is_empty() {
+                            text.clone()
+                        } else {
+                            user.apply(&mut r);
+                            fts_text(&source_name, &dir, &name, &ext, &r)
+                        };
                         let (kpc, kmode) = r.key.map(|k| (Some(k.pc as i64), Some(k.mode as i64))).unwrap_or((None, None));
                         let changed = ok.execute(params![
                             info.duration,
@@ -596,9 +684,8 @@ impl Db {
                             o.id
                         ])?;
                         if changed > 0 {
-                            let ut: String = user_tags.query_row([o.id], |r| r.get(0))?;
                             fts_del.execute([o.id])?;
-                            fts_ins.execute(params![o.id, with_user_tags(text, &ut)])?;
+                            fts_ins.execute(params![o.id, with_user_tags(&text, &ut)])?;
                         }
                     }
                     Err(_) => {
@@ -657,13 +744,19 @@ impl Db {
             return Ok(Vec::new());
         }
         let conn = self.read.lock();
-        let sql = format!(
-            "SELECT {ROW_COLS} FROM samples s JOIN sources src ON src.id = s.source_id WHERE s.id IN ({})",
-            vec!["?"; ids.len()].join(", ")
-        );
-        let mut stmt = conn.prepare(&sql)?;
-        let mut rows: HashMap<i64, SampleRow> =
-            stmt.query_map(params_from_iter(ids.iter()), row_to_sample)?.map(|r| r.map(|s| (s.id, s))).collect::<DbResult<_>>()?;
+        let mut rows: HashMap<i64, SampleRow> = HashMap::new();
+        // In chunks, well under SQLite's limit on parameters, for selections of the whole library.
+        for chunk in ids.chunks(500) {
+            let sql = format!(
+                "SELECT {ROW_COLS} FROM samples s JOIN sources src ON src.id = s.source_id WHERE s.id IN ({})",
+                vec!["?"; chunk.len()].join(", ")
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            for row in stmt.query_map(params_from_iter(chunk.iter()), row_to_sample)? {
+                let row = row?;
+                rows.insert(row.id, row);
+            }
+        }
         Ok(ids.iter().filter_map(|id| rows.remove(id)).collect())
     }
 
@@ -866,6 +959,89 @@ impl Db {
     pub fn user_tags(&self, id: i64) -> DbResult<Vec<String>> {
         let s: Option<String> = self.read.lock().query_row("SELECT user_tags FROM samples WHERE id = ?", [id], |r| r.get(0)).optional()?;
         Ok(s.map(|s| split_tags(&s)).unwrap_or_default())
+    }
+
+    /// Sets the tempo and/or key of these samples by hand. Going back to what Saga found reads the
+    /// file name again straight away and queues the sample for analysis, which fills in the rest;
+    /// returns true when any sample was queued.
+    pub fn set_user_values(&self, ids: &[i64], tempo: Option<&TempoChange>, key: Option<&KeyChange>) -> DbResult<bool> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        let mut reanalyze = false;
+        {
+            let mut info = tx.prepare("SELECT name, dir, duration, user_bpm, user_key_pc, user_key_mode FROM samples WHERE id = ?")?;
+            for &id in ids {
+                let found = info
+                    .query_row([id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?, user_values(r, 3)?)))
+                    .optional()?;
+                let Some((name, dir, duration, user)) = found else { continue };
+                let named = || {
+                    let dirs: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+                    meta::resolve(&meta::parse_name(&name, &dirs), &Default::default(), duration)
+                };
+                match tempo {
+                    Some(TempoChange::Bpm { bpm }) => {
+                        tx.execute("UPDATE samples SET user_bpm = ?1, bpm = ?1, bpm_source = 4 WHERE id = ?2", params![bpm, id])?;
+                    }
+                    Some(TempoChange::NoTempo) => {
+                        tx.execute("UPDATE samples SET user_bpm = 0, bpm = NULL, bpm_source = 4 WHERE id = ?", [id])?;
+                    }
+                    Some(TempoChange::Detected) if user.bpm.is_some() => {
+                        let r = named();
+                        tx.execute("UPDATE samples SET user_bpm = NULL, bpm = ?, bpm_source = ?, status = 0 WHERE id = ?", params![r.bpm, r.bpm_source as i64, id])?;
+                        reanalyze = true;
+                    }
+                    _ => {}
+                }
+                match key {
+                    Some(KeyChange::Key { pc, mode }) => {
+                        tx.execute(
+                            "UPDATE samples SET user_key_pc = ?1, user_key_mode = ?2, key_pc = ?1, key_mode = ?2, key_source = 4 WHERE id = ?3",
+                            params![pc, mode, id],
+                        )?;
+                    }
+                    Some(KeyChange::NoKey) => {
+                        tx.execute("UPDATE samples SET user_key_pc = -1, user_key_mode = NULL, key_pc = NULL, key_mode = NULL, key_source = 4 WHERE id = ?", [id])?;
+                    }
+                    Some(KeyChange::Detected) if user.key.is_some() => {
+                        let r = named();
+                        let (kpc, kmode) = r.key.map(|k| (Some(k.pc as i64), Some(k.mode as i64))).unwrap_or((None, None));
+                        tx.execute(
+                            "UPDATE samples SET user_key_pc = NULL, user_key_mode = NULL, key_pc = ?, key_mode = ?, key_source = ?, status = 0 WHERE id = ?",
+                            params![kpc, kmode, r.key_source as i64, id],
+                        )?;
+                        reanalyze = true;
+                    }
+                    _ => {}
+                }
+                refresh_fts(&tx, id)?;
+            }
+        }
+        tx.commit()?;
+        self.changed();
+        Ok(reanalyze)
+    }
+
+    /// Points a sample at its file's new name in the same folder, keeping its id and so its
+    /// favorite, tags, collections and edits.
+    pub fn rename_sample(&self, id: i64, path: &str, name: &str) -> DbResult<()> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        // A row left over for a file that's gone would hold the path.
+        tx.execute("DELETE FROM samples WHERE path = ?1 AND id != ?2", params![path, id])?;
+        tx.execute("UPDATE samples SET path = ?, name = ? WHERE id = ?", params![path, name, id])?;
+        refresh_fts(&tx, id)?;
+        tx.commit()?;
+        self.changed();
+        Ok(())
+    }
+
+    /// Every folder (relative, `/`-separated) of a source that holds samples.
+    pub fn source_dirs(&self, source_id: i64) -> DbResult<Vec<String>> {
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare("SELECT DISTINCT dir FROM samples WHERE source_id = ? AND dir != ''")?;
+        let rows = stmt.query_map([source_id], |r| r.get(0))?;
+        rows.collect()
     }
 
     pub fn mark_played(&self, id: i64) -> DbResult<()> {
@@ -1105,6 +1281,68 @@ mod tests {
         assert_eq!(names(&db, Filters::default()), vec!["LoFi_Keys_Rhodes_Loop_120_Gm"]);
         db.set_excluded(src, "Dusty Drums", false).unwrap();
         assert_eq!(db.source(src).unwrap().unwrap().excluded, vec!["Dusty Drums 2"]);
+    }
+
+    fn by_name(db: &Db, name: &str) -> SampleRow {
+        db.query(&QueryRequest { filters: Filters::default(), sort: "name".into(), desc: false, offset: 0, limit: 100, seed: 0 })
+            .unwrap()
+            .rows
+            .into_iter()
+            .find(|r| r.name == name)
+            .unwrap()
+    }
+
+    #[test]
+    fn tempo_and_key_set_by_hand_stick() {
+        let (_d, db, src) = open();
+        let bass = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((bass.key.as_deref(), bass.key_source, bass.bpm, bass.bpm_source), (Some("Am"), Some("name"), Some(124.0), Some("name")));
+
+        // The name says A minor, but it's really in G.
+        let queued = db.set_user_values(&[bass.id], Some(&TempoChange::Bpm { bpm: 123.45 }), Some(&KeyChange::Key { pc: 7, mode: 0 })).unwrap();
+        assert!(!queued);
+        let r = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((r.key.as_deref(), r.key_source, r.bpm, r.bpm_source), (Some("G"), Some("user"), Some(123.45), Some("user")));
+        assert_eq!(names(&db, Filters { text: "key:G".into(), ..Default::default() }), vec!["Nightdrive_Bass_Loop_124_Am"]);
+        // Its indexed text follows: plain words find the new key, not the old one.
+        assert_eq!(names(&db, Filters { text: "nightdrive 9b".into(), ..Default::default() }), vec!["Nightdrive_Bass_Loop_124_Am"]);
+        assert!(names(&db, Filters { text: "nightdrive 8a".into(), ..Default::default() }).is_empty());
+
+        // A changed file is read again from its name, and analysis runs, but the values set by hand stay.
+        db.upsert_files(src, "lib", &[ScannedFile { existing: Some(bass.id), mtime: 2, ..scanned("Nightdrive/Loops", "Nightdrive_Bass_Loop_124_Am") }]).unwrap();
+        let r = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((r.key.as_deref(), r.bpm, r.status), (Some("G"), Some(123.45), 0));
+        let info = AudioInfo { duration: 7.74, sample_rate: 44100, channels: 2, bit_depth: Some(24), peaks: vec![0; 4], peak_db: None, loudness: None, sound: None };
+        let resolved = meta::resolve(&meta::parse_name("Nightdrive_Bass_Loop_124_Am", &["Nightdrive", "Loops"]), &Default::default(), Some(7.74));
+        db.apply_analysis(&[AnalysisOutcome { id: bass.id, result: Ok((info, resolved, "stale text".into())) }]).unwrap();
+        let r = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((r.key.as_deref(), r.key_source, r.bpm, r.status), (Some("G"), Some("user"), Some(123.45), 1));
+        assert_eq!(names(&db, Filters { text: "nightdrive 9b".into(), ..Default::default() }).len(), 1);
+
+        // "No key" and "no tempo" stick the same way.
+        db.set_user_values(&[bass.id], Some(&TempoChange::NoTempo), Some(&KeyChange::NoKey)).unwrap();
+        let r = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((r.key, r.key_source, r.bpm, r.bpm_source), (None, Some("user"), None, Some("user")));
+
+        // Back to what Saga found: the name is read again now, and analysis is queued for the rest.
+        assert!(db.set_user_values(&[bass.id], Some(&TempoChange::Detected), Some(&KeyChange::Detected)).unwrap());
+        let r = by_name(&db, "Nightdrive_Bass_Loop_124_Am");
+        assert_eq!((r.key.as_deref(), r.key_source, r.bpm, r.bpm_source, r.status), (Some("Am"), Some("name"), Some(124.0), Some("name"), 0));
+        // Nothing was set by hand any more, so there's nothing to put back.
+        assert!(!db.set_user_values(&[bass.id], None, Some(&KeyChange::Detected)).unwrap());
+    }
+
+    #[test]
+    fn renamed_samples_keep_what_belongs_to_them() {
+        let (_d, db, _) = open();
+        let kick = by_name(&db, "DT2_Kick_Dusty_03");
+        db.set_favorite(&[kick.id], true).unwrap();
+        db.set_user_tags(kick.id, &["punchy".into()]).unwrap();
+        db.rename_sample(kick.id, "/lib/Dusty Drums/One Shots/Kick_Dusty_C_120.wav", "Kick_Dusty_C_120").unwrap();
+        let r = db.sample(kick.id).unwrap().unwrap();
+        assert_eq!((r.name.as_str(), r.path.as_str(), r.favorite), ("Kick_Dusty_C_120", "/lib/Dusty Drums/One Shots/Kick_Dusty_C_120.wav", true));
+        assert_eq!(names(&db, Filters { text: "kick 120 punchy".into(), ..Default::default() }), vec!["Kick_Dusty_C_120"]);
+        assert!(names(&db, Filters { text: "dt2 kick".into(), ..Default::default() }).is_empty());
     }
 
     #[test]

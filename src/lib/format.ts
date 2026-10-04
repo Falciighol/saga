@@ -4,6 +4,19 @@ export function fmtCount(n: number | null | undefined): string {
   return (n ?? 0).toLocaleString("en-US");
 }
 
+/** File sizes the way Finder shows them: "820 KB", "48 MB", "2.1 GB". */
+export function fmtBytes(n: number): string {
+  if (n < 1000) return `${n} bytes`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1000;
+  let u = 0;
+  while (v >= 1000 && u < units.length - 1) {
+    v /= 1000;
+    u++;
+  }
+  return `${v < 10 && u > 0 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
+}
+
 /** Compact length for lists: "0.62 s", "7.7 s", "1:34". */
 export function fmtLength(s: number | null | undefined): string {
   if (s == null) return "—";
@@ -22,9 +35,11 @@ export function fmtClock(s: number): string {
   return `${m}:${sec.toFixed(2).padStart(5, "0")}`;
 }
 
-export function fmtBpm(b: number | null | undefined): string {
+/** "124", "123.8", "123.45"; with `fixed`, always two decimals: "124.00". */
+export function fmtBpm(b: number | null | undefined, fixed = false): string {
   if (b == null) return "—";
-  return Number.isInteger(b) ? String(b) : b.toFixed(1);
+  if (fixed) return b.toFixed(2);
+  return String(Math.round(b * 100) / 100);
 }
 
 export function fmtRate(hz: number | null | undefined): string {
@@ -63,10 +78,15 @@ export function fmtSeconds(s: number): string {
 /** Marks values detected from the audio, which are estimates. */
 export const ESTIMATE = "≈";
 
+/** Whether a sample's tempo is worth showing: a loop's, or one set by hand. */
+export function hasTempo(row: { kind: string; bpm: number | null; bpmSource: string | null }): boolean {
+  return !!row.bpm && (row.kind === "loop" || row.bpmSource === "user");
+}
+
 /** A loop's tempo for lists: "124", "≈123.8" when detected, or "—". */
-export function bpmText(row: { kind: string; bpm: number | null; bpmSource: string | null }): string {
-  if (row.kind !== "loop" || !row.bpm) return "—";
-  return `${row.bpmSource === "audio" ? ESTIMATE : ""}${fmtBpm(row.bpm)}`;
+export function bpmText(row: { kind: string; bpm: number | null; bpmSource: string | null }, fixed = false): string {
+  if (!hasTempo(row)) return "—";
+  return `${row.bpmSource === "audio" ? ESTIMATE : ""}${fmtBpm(row.bpm, fixed)}`;
 }
 
 export function keyText(row: { key: string | null; keySource: string | null }): string | null {
@@ -94,6 +114,8 @@ export function sourceHint(what: "Tempo" | "Key", source: string | null): string
       return `${what} from the file name`;
     case "audio":
       return `${what} detected from the audio — worth checking`;
+    case "user":
+      return `${what} set by you`;
     default:
       return undefined;
   }

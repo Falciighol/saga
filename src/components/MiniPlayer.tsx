@@ -94,7 +94,9 @@ const MiniRow = memo(function MiniRow({ row, index, width }: { row: SampleRow; i
   const selected = useBrowse((s) => s.selected?.id === row.id);
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const playing = status === "playing" || status === "loading";
-  const meta = row.kind === "loop" ? [bpmText(row) === "—" ? null : bpmText(row), keyText(row)] : [fmtLength(row.duration), keyText(row)];
+  const bpmFixed = usePrefs((s) => s.bpmFixed);
+  const tempo = bpmText(row, bpmFixed);
+  const meta = row.kind === "loop" ? [tempo === "—" ? null : tempo, keyText(row)] : [fmtLength(row.duration), keyText(row)];
   const select = (play?: boolean) => useBrowse.getState().selectRow(row, index, play === undefined ? undefined : { play });
   return (
     <div
@@ -204,7 +206,7 @@ function MiniDrag({ row }: { row: SampleRow }) {
       title={state.kind === "rendering" ? "Rendering…" : processing?.processed ? `Drag the processed clip (${processing.label})` : "Drag into your DAW"}
       onDragStart={(e) => {
         e.preventDefault();
-        if (state.kind === "original" || state.kind === "ready") dragOut([state.path]);
+        if (state.kind === "original") dragOut([state.path]);
         else dragSample(row);
       }}
       className={cx("flex h-8 shrink-0 cursor-grab items-center gap-1.5 rounded-[7px] border border-line2 bg-raised pr-2.5 pl-2 text-small font-semibold active:cursor-grabbing", state.kind === "rendering" && "animate-soft-pulse")}

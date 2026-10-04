@@ -78,7 +78,7 @@ src-tauri/src
   query.rs     filters and search syntax → SQL
   audio.rs     preview engine (CPAL mixer, live stretch/repitch voices, metronome, progressions)
   dsp.rs       shared processing: region, reverse, fades, gain, stretch, repitch, WAV writing
-  render.rs    offline renders, file naming, zoomable waveform detail for the editor
+  render.rs    offline renders, file naming, scratch renders and clearing, zoomable waveform detail
   fonts.rs     installed font discovery for the font settings
   commands.rs  Tauri commands
 src
@@ -116,27 +116,29 @@ npm run release:windows   # on the Windows PC
 1. `npm run set-version` writes the version to `package.json`, `tauri.conf.json`, `Cargo.toml`
    and `Cargo.lock`.
 2. The pushed tag starts `.github/workflows/release.yml` (it can also be run from the Actions
-   tab). It only opens the **draft** release; nothing is built in CI.
+   tab). It is the only thing that creates the release: a **draft** whose notes come from
+   `.github/RELEASE_TEMPLATE.md` (install steps plus a "What's new" skeleton). Nothing is built in
+   CI. Edit the draft's "What's new" before publishing.
 3. `npm run release:mac` builds the Mac version on your Mac: one universal app for Apple Silicon
    and Intel, signed with your Developer ID and notarized by Apple (notarizing in CI would use up
    the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the
-   signed update bundle to the draft, and adds the Mac entries to `latest.json`. It waits for the
-   workflow to finish first, so the draft isn't opened twice.
+   signed update bundle to the draft, and adds the Mac entries to `latest.json`. It never creates
+   a release: if the workflow hasn't opened the draft yet, it stops and tells you to wait for it.
 4. `npm run release:windows` builds the NSIS installer on the PC (not code-signed, so Windows
-   shows an "unknown publisher" warning) and leaves three files in `release-windows/`: the
-   `-setup.exe`, its `.sig`, and a `latest.json` with a `windows-x86_64` entry. It uploads nothing;
-   drag them onto the draft yourself. If `gh` is signed in and the draft already has a
-   `latest.json`, the script merges into it, so replace the draft's copy with the new one. If it
-   can't (it says so), don't overwrite a `latest.json` that already has the Mac entries; upload
-   Windows first and run `release:mac` after, or fix `gh` and run it again.
+   shows an "unknown publisher" warning), uploads the `-setup.exe` and its `.sig` to the draft, and
+   adds the `windows-x86_64` entry to `latest.json`.
+
 5. Check the draft has the .dmg, the Windows setup .exe and a `latest.json` listing
    `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish it. That's the moment
    installed copies see the update.
 
-If `gh` fails partway (signed out, network, rate limit), `release:mac` still finishes the build,
-keeps the files in `release-mac/` and ends by listing what's left to do by hand on the draft: open
-it, upload the files, and add its entries to `latest.json`. `release:windows` never uploads, so it
-only needs `gh` to merge `latest.json`; without it, it explains how to merge by hand.
+Both scripts merge into the draft's existing `latest.json`, so the order doesn't matter and they
+can run on different days: whichever goes second keeps the first one's entries. Neither creates a
+release; if the workflow hasn't opened the draft yet, they stop and say so.
+
+If `gh` fails partway (signed out, network, rate limit), the script still finishes the build, keeps
+the files in `release-mac/` or `release-windows/` and ends by listing what's left to do by hand on
+the draft: upload the files, and add its entries to `latest.json`.
 
 Both scripts insist on a clean working tree and a pushed commit, so the builds always match
 what's tagged.

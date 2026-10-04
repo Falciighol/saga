@@ -32,7 +32,8 @@ export interface DirNode {
 
 export type Kind = "loop" | "oneshot";
 
-export type ValueSource = "name" | "metadata" | "audio";
+/** "user": set by hand in Saga, which beats everything else. */
+export type ValueSource = "name" | "metadata" | "audio" | "user";
 
 export interface SampleRow {
   id: number;
@@ -67,6 +68,28 @@ export interface SampleRow {
   favorite: boolean;
   online: boolean;
   playCount: number;
+}
+
+/** A tempo set by hand, or back to what Saga found. Mirrors `TempoChange` in model.rs. */
+export type TempoChange = { to: "bpm"; bpm: number } | { to: "noTempo" } | { to: "detected" };
+
+/** A key set by hand (mode 0 major, 1 minor, 2 a single note), or back to what Saga found. Mirrors `KeyChange` in model.rs. */
+export type KeyChange = { to: "key"; pc: number; mode: 0 | 1 | 2 } | { to: "noKey" } | { to: "detected" };
+
+export interface FileDates {
+  id: number;
+  /** Seconds since 1970 (the modified time where the drive keeps no created time). */
+  created: number | null;
+  modified: number | null;
+}
+
+export interface RenameOutcome {
+  id: number;
+  /** The name before, to undo with. */
+  from: string;
+  to: string;
+  /** Why it wasn't renamed; null when it was. */
+  error: string | null;
 }
 
 export interface KeyFilter {
@@ -186,6 +209,36 @@ export interface WaveformDetail {
   /** Base64 peaks per channel. */
   channels: string[];
   duration: number;
+}
+
+/** Where renders, Lab clips and saved variations go. */
+export interface SavedSounds {
+  path: string;
+  /** Still the default, ~/Music/Saga. */
+  isDefault: boolean;
+}
+
+export interface FileCount {
+  files: number;
+  bytes: number;
+}
+
+/** How much space renders take. */
+export interface RendersUsage {
+  /** The Renders folder in the saved sounds folder. */
+  path: string;
+  all: FileCount;
+  olderThanWeek: FileCount;
+  olderThanMonth: FileCount;
+  /** Renders made ahead of time, which Saga clears on its own. */
+  scratch: FileCount;
+}
+
+export interface ClearedRenders {
+  cleared: FileCount;
+  /** Files the Trash wouldn't take. */
+  failed: number;
+  usage: RendersUsage;
 }
 
 export interface SuggestedFolder {

@@ -9,7 +9,9 @@ import { MiniPlayer } from "./components/MiniPlayer";
 import { DropTarget, Toasts, UpdateNotice } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { ConfirmHost, PromptHost } from "./components/Prompt";
+import { RenameHost } from "./components/Rename";
 import { ListHeader, SampleList } from "./components/SampleList";
+import { SelectionBar } from "./components/SelectionBar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { SoundMapView } from "./components/SoundMap";
@@ -78,14 +80,16 @@ export default function App() {
 
   const overlays = (
     <>
+      {/* First, so dialogs opened from Settings (confirmations, adding folders) stack above it. */}
+      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
       <MenuHost />
       <PromptHost />
       <ConfirmHost />
+      <RenameHost />
       <AddFoldersHost />
       <Toasts />
       <UpdateNotice />
       <DropTarget />
-      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
     </>
   );
 
@@ -121,7 +125,10 @@ export default function App() {
                   <TypeBar />
                   <FilterBar />
                   <ListHeader />
-                  <SampleList />
+                  <div className="relative flex min-h-0 flex-1 flex-col">
+                    <SampleList />
+                    <SelectionBar />
+                  </div>
                   <PreviewPanel />
                 </>
               )}

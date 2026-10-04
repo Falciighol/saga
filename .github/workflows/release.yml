@@ -1,5 +1,6 @@
-# Opens the draft GitHub release for the app's version. Nothing is built here: the Mac build is made
-# on a Mac with `npm run release:mac` and the Windows build on a PC with `npm run release:windows`
+# Opens the draft GitHub release for the app's version. This is the only place releases are created;
+# the scripts below only add files to the draft it opens, whose notes come from
+# .github/RELEASE_TEMPLATE.md. Nothing is built here: the Mac build is made on a Mac with `npm run release:mac` and the Windows build on a PC with `npm run release:windows`
 # (notarizing in CI costs too many macOS runner minutes; Windows isn't code-signed, so there's little
 # for CI to add). Each of them puts its installer on the draft.
 #
@@ -25,6 +26,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, so the notes can link the changelog from the previous release
       - name: Versions agree
         run: node scripts/version.mjs --check
       - name: Draft release
@@ -44,6 +47,7 @@ jobs:
             exit 1
           fi
           if [[ -z "$id" ]]; then
+            node scripts/release-notes.mjs "$version" > "$RUNNER_TEMP/notes.md"
             gh release create "$tag" --draft --target "$GITHUB_SHA" --title "Saga $version" \
-              --notes "Download the installer for your computer below. If Saga is already installed, it will offer this update on its own."
+              --notes-file "$RUNNER_TEMP/notes.md"
           fi

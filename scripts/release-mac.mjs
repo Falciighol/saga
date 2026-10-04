@@ -1,5 +1,6 @@
 // Builds the notarized macOS release on this Mac and adds it to the version's draft GitHub
-// release (opened by .github/workflows/release.yml), next to the Windows build from
+// release (opened only by .github/workflows/release.yml; this
+// script never creates a release), next to the Windows build from
 // `npm run release:windows`.
 //   npm run release:mac
 //
@@ -21,11 +22,11 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseNotes } from "./release-notes.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const updaterKey = join(homedir(), ".tauri", "saga_updater.key");
 const target = "universal-apple-darwin";
-const notes = "Download the installer for your computer below. If Saga is already installed, it will offer this update on its own.";
 
 function fail(message) {
   console.error(`\n✗ ${message}`);
@@ -124,22 +125,6 @@ const assets = [dmgName, archiveName, `${archiveName}.sig`];
 /** Runs gh without stopping the script; null means it failed. */
 const gh = (args, opts = {}) => run("gh", args, { allowFail: true, ...opts });
 
-// The workflow opens the draft; don't race it into opening a second one.
-step("Waiting for any running Release workflow");
-for (;;) {
-  const running = ["in_progress", "queued"].map((status) =>
-    gh(["run", "list", "-R", repo, "--workflow", "release.yml", "--status", status, "--json", "databaseId"]),
-  );
-  if (running.includes(null)) {
-    console.log("  couldn't ask gh about it; carrying on");
-    break;
-  }
-  const count = running.reduce((n, json) => n + JSON.parse(json || "[]").length, 0);
-  if (!count) break;
-  console.log(`  ${count} running; checking again in 30 s`);
-  spawnSync("sleep", ["30"]);
-}
-
 // What is left for you to do by hand.
 const todo = { publishedAlready: false, draft: false, uploads: false, latest: "" };
 
@@ -154,16 +139,9 @@ if (found == null) {
   fail(`${tag} is already published. Bump the version with npm run set-version -- <x.y.z>. The build is in ${out}.`);
 } else {
   if (!releaseId) {
-    if (gh(["release", "create", tag, "-R", repo, "--draft", "--target", sha, "--title", `Saga ${version}`, "--notes", notes]) == null) {
-      console.log("  gh couldn't open the draft");
-      Object.assign(todo, { draft: true, uploads: true, latest: "unmerged" });
-    } else {
-      console.log("  opened the draft; add the Windows build with npm run release:windows");
-      existing = [];
-    }
-  } else {
-    existing = gh(["api", `repos/${repo}/releases/${releaseId}`, "--jq", ".assets[].name"])?.split("\n").filter(Boolean) ?? null;
+    fail(`There's no ${tag} draft. Run the Release workflow first (push the ${tag} tag, or run it from the Actions tab), then run this again. The build is in ${out}.`);
   }
+  existing = gh(["api", `repos/${repo}/releases/${releaseId}`, "--jq", ".assets[].name"])?.split("\n").filter(Boolean) ?? null;
 }
 
 if (!todo.uploads) {
@@ -207,7 +185,7 @@ if (!todo.draft && !todo.uploads && !todo.latest) {
   console.log(`\n! The build is done and its files are in ${out}, but gh couldn't finish. Still to do by hand at ${releasesUrl}:`);
   let n = 0;
   if (todo.draft) {
-    console.log(`  ${++n}. Open a draft release for the tag ${tag} (target commit ${sha.slice(0, 7)}), titled "Saga ${version}", if there isn't one yet.`);
+    console.log(`  ${++n}. Make sure the ${tag} draft exists. Only the Release workflow opens it; run it from the Actions tab if it hasn't.`);
   }
   if (todo.uploads) console.log(`  ${++n}. Upload ${assets.join(", ")} from ${out} to the draft.`);
   if (todo.latest === "merged") {

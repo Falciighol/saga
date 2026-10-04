@@ -1,9 +1,9 @@
 import { FolderPlus, FolderSearch, Minus, Pause, Play, Plus, Repeat, SlidersHorizontal, Star, Volume2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
-import { collectionSubmenu, dragOut, dragSample, findSimilar, reveal } from "../lib/actions";
+import { collectionSubmenu, dragOut, dragSample, findSimilar, keySubmenu, reveal, tempoSubmenu } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
-import { barsCount, ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate, sourceHint } from "../lib/format";
+import { barsCount, ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate, hasTempo, sourceHint } from "../lib/format";
 import { revealLabel } from "../lib/platform";
 import { projectKeyLabel } from "../lib/keys";
 import { DEFAULT_EDIT, keyLabel, type Processing } from "../lib/processing";
@@ -329,10 +329,10 @@ export function DragTile({ row, state, processing, tall }: { row: SampleRow; sta
       role="button"
       tabIndex={-1}
       aria-label={`Drag into your DAW: ${detail}`}
-      title={state.kind === "error" ? state.message : state.kind === "ready" ? state.path : undefined}
+      title={state.kind === "error" ? state.message : state.kind === "ready" ? "Saved in the Renders folder of your saved sounds when you drag it out" : undefined}
       onDragStart={(e) => {
         e.preventDefault();
-        if (state.kind === "original" || state.kind === "ready") dragOut([state.path]);
+        if (state.kind === "original") dragOut([state.path]);
         else dragSample(row);
       }}
       className={cx(
@@ -354,8 +354,20 @@ function TempoReadout({ row, processing }: { row: SampleRow; processing: Process
   const edit = useEdit(row.id);
   const update = useEdits((s) => s.update);
   const project = useProject();
-  if (row.kind !== "loop" || !row.bpm) {
-    return <span className="font-mono text-body text-text2">{row.kind === "oneshot" ? "One-shot" : "No tempo"}</span>;
+  const fixed = usePrefs((s) => s.bpmFixed);
+  // Setting the tempo by hand is in the same menu as the ways of playing it.
+  const byHand: MenuItem = { label: "The sample's tempo", submenu: tempoSubmenu([row.id], [row]) };
+  if (!hasTempo(row)) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => openMenuBelow(e.currentTarget, tempoSubmenu([row.id], [row]))}
+        title={row.bpmSource === "user" ? "No tempo, set by you" : "Give it a tempo"}
+        className="flex h-7 items-center rounded-md px-1.5 font-mono text-body text-text2 hover:bg-raised"
+      >
+        {row.kind === "oneshot" && row.bpmSource !== "user" ? "One-shot" : "No tempo"}
+      </button>
+    );
   }
   const menu = (el: HTMLElement) => {
     const items: MenuItem[] = [
@@ -366,6 +378,8 @@ function TempoReadout({ row, processing }: { row: SampleRow; processing: Process
       "separator",
       { label: "Stretch — keep the pitch", checked: processing.mode === "stretch", onSelect: () => update(row.id, { mode: "stretch" }) },
       { label: "Repitch — like tape", checked: processing.mode === "repitch", onSelect: () => update(row.id, { mode: "repitch" }) },
+      "separator",
+      byHand,
     ];
     openMenuBelow(el, items);
   };
@@ -376,10 +390,10 @@ function TempoReadout({ row, processing }: { row: SampleRow; processing: Process
       type="button"
       onClick={(e) => menu(e.currentTarget)}
       className="flex h-7 items-center gap-2 rounded-md px-1.5 hover:bg-raised"
-      title={row.bpmSource === "audio" ? `${sourceHint("Tempo", "audio")}. Half and double time are in this menu.` : "Tempo options"}
+      title={row.bpmSource === "audio" ? `${sourceHint("Tempo", "audio")}. Half and double time, and setting it yourself, are in this menu.` : row.bpmSource === "user" ? `${sourceHint("Tempo", "user")}. Tempo options` : "Tempo options"}
     >
       <span className="font-mono text-body tabular">
-        {changed ? `${est}${fmtBpm(processing.sourceBpm!)} → ${fmtBpm(Math.round(processing.targetBpm! * 100) / 100)}` : `${est}${fmtBpm(processing.sourceBpm!)} BPM`}
+        {changed ? `${est}${fmtBpm(processing.sourceBpm!, fixed)} → ${fmtBpm(Math.round(processing.targetBpm! * 100) / 100, fixed)}` : `${est}${fmtBpm(processing.sourceBpm!, fixed)} BPM`}
       </span>
       <span className="font-mono text-small text-text3 tabular">
         {changed ? `×${processing.rate.toFixed(3)}${processing.mode === "repitch" ? " tape" : ""}` : project.sync ? "in sync" : "original"}
@@ -448,7 +462,7 @@ export function PreviewPanel() {
   const playing = status === "playing" || status === "loading";
   const loopOn = shouldLoop(row);
   const segments = row.dir.split("/").filter(Boolean);
-  const bars = barsCount(row.duration, row.kind === "loop" ? row.bpm : null);
+  const bars = barsCount(row.duration, hasTempo(row) ? row.bpm : null);
   const edited = edit !== DEFAULT_EDIT;
   const meta = [
     row.ext.toUpperCase(),
@@ -561,11 +575,16 @@ export function PreviewPanel() {
         <Divider />
         <div className="flex items-center gap-2.5">
           <SectionLabel>Key</SectionLabel>
-          <span className="font-mono text-body whitespace-nowrap" title={sourceHint("Key", row.keySource)}>
+          <button
+            type="button"
+            onClick={(e) => openMenuBelow(e.currentTarget, keySubmenu([row.id], [row]))}
+            className="flex h-7 items-center rounded-md px-1.5 font-mono text-body whitespace-nowrap hover:bg-raised"
+            title={[sourceHint("Key", row.keySource), "Click to set the key yourself"].filter(Boolean).join(". ")}
+          >
             {processing.keyFrom
               ? `${row.keySource === "audio" ? ESTIMATE : ""}${processing.keyTo && processing.keyTo !== processing.keyFrom ? `${processing.keyFrom} → ${processing.keyTo}` : processing.keyFrom}`
               : "—"}
-          </span>
+          </button>
           <span title={project.key ? "Transpose pitched samples to the project key (K)" : "Set a project key in the title bar first"}>
             <Switch
               size="sm"

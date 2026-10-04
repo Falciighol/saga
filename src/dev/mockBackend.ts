@@ -3,10 +3,10 @@
 
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import { compatibleKeys } from "../lib/keys";
+import { camelot, compatibleKeys, keyName } from "../lib/keys";
 import { fittingKeys, scaleFit, scaleNotes } from "../lib/theory";
 import { groupOf } from "../lib/soundmap";
-import type { Collection, Facets, Filters, PitchProfile, QueryRequest, SampleRow, SourceInfo } from "../lib/types";
+import type { Collection, Facets, Filters, KeyChange, PitchProfile, QueryRequest, SampleRow, SourceInfo, TempoChange } from "../lib/types";
 import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
 
 function rng(seed: number) {
@@ -156,12 +156,34 @@ const ALL_ROWS = build();
 /** Everything in the library: all rows but the ones in excluded folders or removed sources. */
 let ROWS = ALL_ROWS;
 
+/** Folder names left out everywhere, like the real setting. */
+let excludedNames: string[] = [];
+
+function nameExcluded(seg: string): boolean {
+  return excludedNames.some((n) => new RegExp(`^${n.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i").test(seg));
+}
+
 function applyExclusions() {
   ROWS = ALL_ROWS.filter((r) => {
     const src = SOURCES.find((s) => s.id === r.sourceId);
-    return src != null && !src.excluded.some((dir) => r.dir === dir || r.dir.startsWith(`${dir}/`));
+    return src != null && !src.excluded.some((dir) => r.dir === dir || r.dir.startsWith(`${dir}/`)) && !r.dir.split("/").some((seg) => seg && nameExcluded(seg));
   });
   void emit("library-changed");
+}
+
+/** Tempo and key as found, to go back to after setting them by hand. */
+const FOUND = new Map(ALL_ROWS.map((r) => [r.id, { bpm: r.bpm, bpmSource: r.bpmSource, key: r.key, keySource: r.keySource, keyPc: r.keyPc, keyMode: r.keyMode, camelot: r.camelot }]));
+
+function setValues(r: SampleRow, tempo: TempoChange | null, key: KeyChange | null) {
+  const found = FOUND.get(r.id)!;
+  if (tempo?.to === "bpm") Object.assign(r, { bpm: Math.round(tempo.bpm * 100) / 100, bpmSource: "user" });
+  else if (tempo?.to === "noTempo") Object.assign(r, { bpm: null, bpmSource: "user" });
+  else if (tempo?.to === "detected") Object.assign(r, { bpm: found.bpm, bpmSource: found.bpmSource });
+  if (key?.to === "key") {
+    const name = key.mode === 2 ? NOTES[key.pc] : keyName(key.pc, key.mode);
+    Object.assign(r, { key: name, keySource: "user", keyPc: key.pc, keyMode: key.mode, camelot: key.mode === 2 ? null : camelot(key.pc, key.mode) });
+  } else if (key?.to === "noKey") Object.assign(r, { key: null, keySource: "user", keyPc: null, keyMode: null, camelot: null });
+  else if (key?.to === "detected") Object.assign(r, { key: found.key, keySource: found.keySource, keyPc: found.keyPc, keyMode: found.keyMode, camelot: found.camelot });
 }
 
 /** Folders the mock pretends are inside any folder that gets added. */
@@ -248,6 +270,24 @@ function soundMap(kind: string | null, aspect: string) {
   };
 }
 
+let savedSounds: string | null = null;
+/** Files in the Renders folder by age in days, about a day's heavy use and some older ones. */
+let mockRenders: { days: number; bytes: number }[] = Array.from({ length: 1340 }, (_, i) => ({ days: i < 300 ? 0 : i < 700 ? 3 + (i % 4) : i < 1020 ? 12 + (i % 15) : 40 + (i % 60), bytes: 1_200_000 + ((i * 7919) % 2_400_000) }));
+let mockScratchBytes = 128_000_000;
+
+function mockUsage() {
+  const count = (keep: (r: { days: number }) => boolean) => {
+    const rs = mockRenders.filter(keep);
+    return { files: rs.length, bytes: rs.reduce((a, r) => a + r.bytes, 0) };
+  };
+  return {
+    path: `${savedSounds ?? "/Users/me/Music/Saga"}/Renders`,
+    all: count(() => true),
+    olderThanWeek: count((r) => r.days > 7),
+    olderThanMonth: count((r) => r.days > 30),
+    scratch: { files: mockScratchBytes ? 40 : 0, bytes: mockScratchBytes },
+  };
+}
 let recordTimer: number | undefined;
 
 /**
@@ -361,7 +401,8 @@ function query(req: QueryRequest) {
     rows.sort((a, b) => fit(b) - fit(a) || a.name.localeCompare(b.name));
   }
   else if (req.sort === "random") rows = rows.map((r) => [((r.id * 2654435761 + req.seed) % 4294967291) >>> 0, r] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
-  return { total: rows.length, offset: req.offset, rows: rows.slice(req.offset, req.offset + req.limit) };
+  // Copies, like rows that come over IPC: the UI tells changes apart by identity.
+  return { total: rows.length, offset: req.offset, rows: rows.slice(req.offset, req.offset + req.limit).map((r) => ({ ...r })) };
 }
 
 function facets(f: Filters): Facets {
@@ -621,8 +662,39 @@ export function installMockBackend() {
           return query(args.request as QueryRequest);
         case "get_facets":
           return facets(args.filters as Filters);
-        case "get_sample":
-          return ROWS.find((r) => r.id === args.id) ?? null;
+        case "get_sample": {
+          const r = ROWS.find((x) => x.id === args.id);
+          return r ? { ...r } : null;
+        }
+        case "get_samples":
+          return (args.ids as number[]).flatMap((id) => ROWS.filter((r) => r.id === id).map((r) => ({ ...r })));
+        case "query_ids":
+          return ROWS.filter((r) => matches(r, args.filters as Filters)).map((r) => r.id);
+        case "set_sample_values": {
+          const rows = (args.ids as number[]).map((id) => ROWS.find((r) => r.id === id)).filter((r): r is SampleRow => r != null);
+          for (const r of rows) setValues(r, args.tempo as TempoChange | null, args.key as KeyChange | null);
+          return rows.map((r) => ({ ...r }));
+        }
+        case "excluded_names":
+          return excludedNames;
+        case "set_excluded_names": {
+          const seen = new Set<string>();
+          excludedNames = (args.names as string[]).map((n) => n.trim()).filter((n) => n && !/[/\\]/.test(n) && !seen.has(n.toLowerCase()) && seen.add(n.toLowerCase()));
+          applyExclusions();
+          return excludedNames;
+        }
+        case "file_dates":
+          return (args.ids as number[]).map((id) => ({ id, created: 1_727_000_000 + id * 86_400, modified: 1_727_000_000 + id * 90_000 }));
+        case "rename_samples":
+          return (args.renames as { id: number; name: string }[]).map(({ id, name }) => {
+            const r = ROWS.find((x) => x.id === id);
+            if (!r) return { id, from: "", to: name, error: "No longer in the library" };
+            if (/[/\\:*?"<>|]/.test(name)) return { id, from: r.name, to: name, error: "Names can't contain / \\ : * ? \" < > |" };
+            const from = r.name;
+            r.path = r.path.replace(new RegExp(`${from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.\\w+)$`), `${name}$1`);
+            r.name = name;
+            return { id, from, to: name, error: null };
+          });
         case "pitch_profile": {
           const r = ROWS.find((x) => x.id === args.id);
           return r ? mockProfile(r) : null;
@@ -774,8 +846,19 @@ export function installMockBackend() {
           return null;
         case "save_midi":
           return `/Users/me/Music/Saga/Renders/${args.name} (${args.label}).mid`;
-        case "render_sample":
-          return new Promise((resolve) => setTimeout(() => resolve(`/Users/me/Music/Saga/Renders/${args.label || "render"}.wav`), 200));
+        case "render_sample": {
+          const dir = args.keep ? "/Users/me/Music/Saga/Renders" : "/Users/me/Library/Caches/saga/renders";
+          return new Promise((resolve) => setTimeout(() => resolve(`${dir}/${args.label || "render"}.wav`), 200));
+        }
+        case "renders_usage":
+          return mockUsage();
+        case "clear_renders": {
+          const days = args.olderThanDays as number | null;
+          const gone = mockRenders.filter((r) => days == null || r.days > days);
+          mockRenders = mockRenders.filter((r) => !gone.includes(r));
+          mockScratchBytes = 0;
+          return { cleared: { files: gone.length, bytes: gone.reduce((a, r) => a + r.bytes, 0) }, failed: 0, usage: mockUsage() };
+        }
         case "save_variation":
           return `/Users/me/Music/Saga/Variations/${args.label}.wav`;
         case "waveform_detail": {
@@ -809,6 +892,11 @@ export function installMockBackend() {
           return { devices: ["MacBook Pro Speakers", "Audio Interface"], current: null };
         case "drag_icon":
           return "/tmp/drag.png";
+        case "saved_sounds_dir":
+          return { path: savedSounds ?? "/Users/me/Music/Saga", isDefault: savedSounds == null };
+        case "set_saved_sounds_dir":
+          savedSounds = (args.path as string | null) ?? null;
+          return { path: savedSounds ?? "/Users/me/Music/Saga", isDefault: savedSounds == null };
         case "suggested_folders":
           return [];
         case "plugin:app|version":

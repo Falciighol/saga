@@ -19,6 +19,42 @@ pub enum Source {
     Metadata = 2,
     /// Detected from the audio.
     Audio = 3,
+    /// Set by hand in Saga, so it beats everything else.
+    User = 4,
+}
+
+/// Tempo and key set by hand, which win over the name, the loop data and detection.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct UserValues {
+    /// `Some(None)` means "no tempo".
+    pub bpm: Option<Option<f64>>,
+    /// `Some(None)` means "no key".
+    pub key: Option<Option<Key>>,
+}
+
+impl UserValues {
+    /// From the stored columns: a tempo of 0 or a key pitch class of -1 means "none".
+    pub fn from_db(bpm: Option<f64>, key_pc: Option<i64>, key_mode: Option<i64>) -> UserValues {
+        UserValues {
+            bpm: bpm.map(|b| (b > 0.0).then_some(b)),
+            key: key_pc.map(|pc| if pc < 0 { None } else { Key::from_db(Some(pc), key_mode) }),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bpm.is_none() && self.key.is_none()
+    }
+
+    pub fn apply(&self, r: &mut Resolved) {
+        if let Some(bpm) = self.bpm {
+            r.bpm = bpm;
+            r.bpm_source = Source::User;
+        }
+        if let Some(key) = self.key {
+            r.key = key;
+            r.key_source = Source::User;
+        }
+    }
 }
 
 /// Everything derivable from the file name and its folders, before decoding.

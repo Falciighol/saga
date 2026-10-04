@@ -1,7 +1,7 @@
 // Turns the project tempo/key and a sample's edits into what the audio engine should do.
 // Preview, editor and renders all go through `computeProcessing`, so they always agree.
 
-import { fmtBpm } from "./format";
+import { fmtBpm, hasTempo } from "./format";
 import type { SampleRow } from "./types";
 
 export type StretchMode = "stretch" | "repitch";
@@ -148,7 +148,8 @@ export function keyMatchShift(row: Pick<SampleRow, "keyPc" | "keyMode">, key: Pr
 export function computeProcessing(row: SampleRow, project: Project, edit: Edit = DEFAULT_EDIT): Processing {
   const duration = row.duration ?? 0;
   const mode = edit.mode ?? project.mode;
-  const isLoopWithTempo = row.kind === "loop" && row.bpm != null && row.bpm > 0;
+  // A tempo set by hand counts even on a one-shot: it was given one to sync.
+  const isLoopWithTempo = hasTempo(row);
   const multiplier = isLoopWithTempo ? (edit.multiplier === "auto" ? autoMultiplier(row.bpm!, project.bpm) : edit.multiplier) : 1;
   const sourceBpm = isLoopWithTempo ? row.bpm! * multiplier : null;
   const synced = project.sync && sourceBpm != null;
@@ -172,7 +173,7 @@ export function computeProcessing(row: SampleRow, project: Project, edit: Edit =
     paramSemitones = semitones;
   }
 
-  const targetBpm = row.bpm != null && row.kind === "loop" ? (synced ? project.bpm : row.bpm * (mode === "repitch" ? rate : 1)) : null;
+  const targetBpm = isLoopWithTempo ? (synced ? project.bpm : row.bpm! * (mode === "repitch" ? rate : 1)) : null;
 
   const regionStart = Math.max(0, Math.min(edit.regionStart ?? 0, duration));
   const regionEnd = Math.max(regionStart, Math.min(edit.regionEnd ?? duration, duration));

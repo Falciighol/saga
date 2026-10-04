@@ -15,8 +15,8 @@ and Intel) or Windows.
 
 ## Why Saga
 
-- **Nothing moves.** Your folders stay exactly as they are. Saga never changes, copies or
-  renames your files.
+- **Nothing moves.** Your folders stay exactly as they are. Saga never moves or copies your
+  files, and only renames them when you ask it to.
 - **Everything is searchable in an instant**, even across tens of thousands of samples and drives
   that come and go.
 - **It hears your samples.** Tempo and key come from file names, embedded loop data or the audio
@@ -35,8 +35,10 @@ and Intel) or Windows.
 Add folders or whole drives with the button, or drop them on the window. Folders are watched, so
 new packs appear on their own. Unplug a drive and its favorites and tags wait until it's back.
 Untick the folders inside you'd rather leave out when you add one, or right-click a folder later
-and choose **Exclude from library**; excluded folders come back from the library folder's
-right-click menu or Settings.
+and choose **Exclude from library**, or pick folders to leave out from Settings; excluded folders
+come back from the library folder's right-click menu or Settings. To leave out a kind of folder
+everywhere, like the `Vocals` folder inside every pack, add its name under **Leave out folders
+named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem Mixes`).
 
 - **Instant search** over names, folders, categories and tags, plus [field syntax](#search-syntax)
   like `bpm:120-128 key:Am+ is:loop`.
@@ -45,6 +47,8 @@ right-click menu or Settings.
   is spread before you pick a range.
 - **Organize** with favorites, collections (right-click a sample, or drop samples on a
   collection) and your own tags.
+- **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
+  tempo, rename them, favorite or collect them, or drag them all into your DAW at once.
 - **Audition** by selecting: loops repeat, click the waveform to seek, and choose the output
   device in Settings. Playback has click-free fades.
 
@@ -61,6 +65,26 @@ bass, synth and vocal hits) get their root note, and drums and effects never get
 On real packs whose names state tempo and key, detection gets the tempo right for 70–80% of
 loops. Keys are only shown when the fit is strong, and those are the right key or its relative
 about 70% of the time.
+
+When Saga gets one wrong, set it yourself: click the key or tempo in the preview, right-click a
+sample, or select several and use the bar that appears. In the Lab's key finder, **Use as its
+key** writes the key you settled on onto the sample. Values you set win over everything else,
+survive rescans, and drive filters, sorting and key matching; **Use what Saga found** puts the
+detected ones back. Tempos show to two decimals when they have them (`123.45`), or always if you
+turn on **Tempos with two decimals** in Settings.
+
+### Rename files with their key and tempo
+
+Select samples and choose **Rename…** to write what Saga knows into the file names. Build the new
+name from tokens (the current name, key, BPM, date created, category) and any text, or pick a
+preset like `{name}_{bpm}_{key}`. Choose how keys are written (`F#m`, `F#min`, `F# minor` or
+Camelot `11A`), optionally as their relative major (`F#m` becomes `A`), and whether tempos are
+rounded. Values a name already has are left out, so `Loop_124_Am` doesn't become
+`Loop_124_Am_124_Am`. A preview shows every new name and any clash before anything changes.
+
+Files are renamed where they are, along with Ableton's `.asd` analysis file next to them, and keep
+their favorites, tags and collections. **Undo** puts the old names back. DAW projects that already
+use a file will look for it under its old name.
 
 ### Fits your track while you listen
 
@@ -86,8 +110,9 @@ metronome click locked to the project tempo.
 
 Drag any row, the preview or the editor's output into your DAW or Finder. A processed sample is
 rendered first, and the render matches what you heard because preview and render share the same
-code. Renders are kept in `Music/Saga/Renders`, so DAW projects that use them keep working. You
-can also **Export…** to any folder, or **Save variation** to add it to your library with the new
+code. Renders you drag out are kept in `Music/Saga/Renders` (or a folder you choose in Settings),
+so DAW projects that use them keep working; Settings shows how much space they take and can move
+old ones to the Trash. You can also **Export…** to any folder, or **Save variation** to add it to your library with the new
 tempo and key in its name (`Arp Loop (124 BPM, Bm, reversed).wav`).
 
 ### Find similar and the sound map

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { MonoChoice, SansChoice } from "../lib/fonts";
 import type { Accent, ThemePref } from "../lib/theme";
+import type { RenamePattern } from "../lib/rename";
 import type { Aspect } from "../lib/types";
 
 export type MapColor = "category" | "brightness" | "loudness";
@@ -39,33 +40,43 @@ export interface PrefValues {
   keyMidiRelated: boolean;
   /** Look for new versions on launch and download them in the background. */
   autoUpdate: boolean;
+  /** Show tempos with two decimals always ("124.00"), not only when they have them. */
+  bpmFixed: boolean;
+  /** The last rename pattern, so batch renames can be repeated. */
+  renamePattern: RenamePattern | null;
 }
 
 interface Prefs extends PrefValues {
   set: (patch: Partial<PrefValues>) => void;
 }
 
+export const DEFAULT_PREFS: PrefValues = {
+  theme: "system",
+  accent: "violet",
+  sansFont: "instrument",
+  sansInstalled: null,
+  monoFont: "geist-mono",
+  monoInstalled: null,
+  uiScale: 1,
+  volume: 0.8,
+  autoplay: true,
+  loopLoops: true,
+  loopShots: false,
+  mapColor: "category",
+  mapArrange: "timbre",
+  mapDrag: "audition",
+  similarAspect: "overall",
+  miniOnTop: true,
+  keyMidiRelated: false,
+  autoUpdate: true,
+  bpmFixed: false,
+  renamePattern: null,
+};
+
 export const usePrefs = create<Prefs>()(
   persist(
     (set) => ({
-      theme: "system",
-      accent: "violet",
-      sansFont: "instrument",
-      sansInstalled: null,
-      monoFont: "geist-mono",
-      monoInstalled: null,
-      uiScale: 1,
-      volume: 0.8,
-      autoplay: true,
-      loopLoops: true,
-      loopShots: false,
-      mapColor: "category",
-      mapArrange: "timbre",
-      mapDrag: "audition",
-      similarAspect: "overall",
-      miniOnTop: true,
-      keyMidiRelated: false,
-      autoUpdate: true,
+      ...DEFAULT_PREFS,
       set: (patch) => set(patch),
     }),
     {

@@ -1,4 +1,5 @@
-// Processed renders for dragging and exporting. Identical requests share one file.
+// Processed renders for dragging and exporting. Identical requests share one file. Renders made
+// ahead of time wait in Saga's cache; dragging one out moves it into Music › Saga › Renders.
 
 import { useEffect, useState } from "react";
 import { editFor, useEdit, useProject } from "../store/project";
@@ -6,23 +7,32 @@ import { api, errorMessage } from "./api";
 import { computeProcessing, type Processing } from "./processing";
 import type { SampleRow } from "./types";
 
-const renders = new Map<string, Promise<string>>();
+const renders = new Map<string, { path: Promise<string>; kept: boolean }>();
 
 function renderKey(row: SampleRow, p: Processing): string {
   return `${row.id}|${JSON.stringify({ ...p.params, beat: null })}`;
 }
 
-/** The file to hand to a DAW: the original, or a render of what you're hearing. */
-export function fileFor(row: SampleRow, p: Processing = computeProcessing(row, useProject.getState(), editFor(row.id))): Promise<string> {
+/**
+ * The original, or a render of what you're hearing. `keep` is for handing the file to a DAW: the
+ * render then lives in the saved sounds folder, where projects can rely on it.
+ */
+export function fileFor(row: SampleRow, p: Processing = computeProcessing(row, useProject.getState(), editFor(row.id)), keep = false): Promise<string> {
   if (!p.processed) return Promise.resolve(row.path);
   const key = renderKey(row, p);
-  let r = renders.get(key);
-  if (!r) {
-    r = api.renderSample(row.id, p.params, p.label);
-    r.catch(() => renders.delete(key));
-    renders.set(key, r);
-  }
-  return r;
+  const known = renders.get(key);
+  if (known && (known.kept || !keep)) return known.path;
+  // A render still being made ahead of time is finished first, so it's moved rather than made twice.
+  const before = known ? known.path.catch(() => null) : Promise.resolve(null);
+  const entry = { path: before.then(() => api.renderSample(row.id, p.params, p.label, keep)), kept: keep };
+  entry.path.catch(() => renders.get(key) === entry && renders.delete(key));
+  renders.set(key, entry);
+  return entry.path;
+}
+
+/** Forgets every render, after they've been cleared away. */
+export function forgetRenders() {
+  renders.clear();
 }
 
 export type RenderState =

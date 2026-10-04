@@ -595,7 +595,7 @@ function OutputCard({ row }: { row: SampleRow }) {
     setBusy(true);
     try {
       await api.saveVariation(row.id, processing.params, processing.label || "variation");
-      toast("Saved to Saga › Variations in your library", "info");
+      toast("Saved to Variations in your library", "info");
     } catch (e) {
       toast(errorMessage(e));
     } finally {
@@ -606,7 +606,7 @@ function OutputCard({ row }: { row: SampleRow }) {
     <Card title="Output">
       <DragTile row={row} state={state} processing={processing} tall />
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" disabled={busy || !processing?.processed} onClick={variation} className="h-[30px] rounded-md border border-line2 text-small text-text2 hover:bg-raised disabled:opacity-40" title="Render into Music › Saga › Variations and add it to your library">
+        <button type="button" disabled={busy || !processing?.processed} onClick={variation} className="h-[30px] rounded-md border border-line2 text-small text-text2 hover:bg-raised disabled:opacity-40" title="Render into the Variations folder of your saved sounds (see Settings) and add it to your library">
           Save variation
         </button>
         <button type="button" onClick={exportFile} className="flex h-[30px] items-center justify-center gap-1.5 rounded-md border border-line2 text-small text-text2 hover:bg-raised">

@@ -69,6 +69,11 @@ interface BrowseState {
 
   selectedIndex: number;
   selected: SampleRow | null;
+  /** Samples picked together (⌘/Ctrl-click, Shift-click, select all), for acting on many at once.
+   *  Empty, or two or more ids; the selected row is the one previewed. */
+  picked: Set<number>;
+  /** Where Shift-click ranges start. */
+  anchor: number;
 
   setView: (view: View) => void;
   setText: (text: string) => void;
@@ -88,7 +93,37 @@ interface BrowseState {
   move: (delta: number) => void;
   rowAt: (index: number) => SampleRow | undefined;
   patchRow: (id: number, patch: Partial<SampleRow>) => void;
+  /** Swaps in fresh copies of these rows wherever they're shown. */
+  replaceRows: (rows: SampleRow[]) => void;
   toggleFavorite: (row: SampleRow) => void;
+
+  /** ⌘/Ctrl-click: adds a row to the picked samples, or takes it out. */
+  togglePick: (row: SampleRow, index: number) => void;
+  /** Shift-click: picks every row from the anchor to this one; with `add` (⌘/Ctrl too), on top of what's picked. */
+  pickRange: (index: number, add?: boolean) => Promise<void>;
+  /** Picks everything the search and filters match. */
+  pickAll: () => Promise<void>;
+  clearPicked: () => void;
+}
+
+/** Most rows a Shift-click range reaches; select all has no limit. */
+const MAX_RANGE = 5000;
+
+/** The samples an action applies to: the picked ones, or else the selected one. */
+export function targetIds(s: Pick<BrowseState, "picked" | "selected"> = useBrowse.getState()): number[] {
+  if (s.picked.size > 1) return [...s.picked];
+  return s.selected ? [s.selected.id] : [];
+}
+
+/** Rows for the picked samples (or the selected one), from the pages already loaded where possible. */
+export async function targetRows(): Promise<SampleRow[]> {
+  const s = useBrowse.getState();
+  const ids = targetIds(s);
+  const known = new Map<number, SampleRow>();
+  for (const p of Object.values(s.pages)) for (const r of p.rows) if (s.picked.has(r.id) || r.id === s.selected?.id) known.set(r.id, r);
+  const missing = ids.filter((id) => !known.has(id));
+  if (missing.length) for (const r of await api.samples(missing)) known.set(r.id, r);
+  return ids.map((id) => known.get(id)).filter((r): r is SampleRow => r != null);
 }
 
 export function backendFilters(s: Pick<BrowseState, "view" | "text" | "kind" | "categories" | "filters">): Filters {
@@ -187,7 +222,7 @@ export const useBrowse = create<BrowseState>((set, get) => {
   };
 
   const run = () => {
-    set((s) => ({ queryKey: s.queryKey + 1, total: null, pages: {}, selectedIndex: -1 }));
+    set((s) => ({ queryKey: s.queryKey + 1, total: null, pages: {}, selectedIndex: -1, picked: new Set<number>(), anchor: -1 }));
     void fetchPage(0);
     scheduleFacets();
   };
@@ -210,6 +245,8 @@ export const useBrowse = create<BrowseState>((set, get) => {
 
     selectedIndex: -1,
     selected: null,
+    picked: new Set<number>(),
+    anchor: -1,
 
     setView: (view) => {
       set({ view });
@@ -277,7 +314,7 @@ export const useBrowse = create<BrowseState>((set, get) => {
     rowAt: (index) => get().pages[Math.floor(index / PAGE_SIZE)]?.rows[index % PAGE_SIZE],
 
     selectRow: (row, index, opts) => {
-      set({ selected: row, selectedIndex: index });
+      set({ selected: row, selectedIndex: index, anchor: index, picked: new Set<number>() });
       const play = opts?.play ?? usePrefs.getState().autoplay;
       if (play) usePlayer.getState().play(row);
     },
@@ -314,6 +351,76 @@ export const useBrowse = create<BrowseState>((set, get) => {
       });
     },
 
+    togglePick: (row, index) => {
+      const s = get();
+      const picked = new Set(s.picked.size ? s.picked : s.selected ? [s.selected.id] : []);
+      if (picked.has(row.id)) {
+        picked.delete(row.id);
+        // The row previewed moves to one still picked.
+        if (s.selected?.id === row.id) {
+          const rest = [...picked].pop();
+          const at = rest == null ? -1 : findLoaded(s, rest);
+          set({ selected: at >= 0 ? s.rowAt(at)! : s.selected, selectedIndex: at >= 0 ? at : s.selectedIndex });
+        }
+      } else {
+        picked.add(row.id);
+        set({ selected: row, selectedIndex: index });
+      }
+      set({ picked: picked.size > 1 ? picked : new Set<number>(), anchor: index });
+    },
+
+    pickRange: async (index, add) => {
+      const s = get();
+      if (s.anchor < 0 || s.total == null) {
+        const row = s.rowAt(index);
+        if (row) s.selectRow(row, index, { play: false });
+        return;
+      }
+      const from = Math.max(0, Math.min(s.anchor, index, s.total - 1));
+      const to = Math.min(s.total - 1, Math.max(s.anchor, index), from + MAX_RANGE - 1);
+      const { queryKey } = s;
+      for (let p = Math.floor(from / PAGE_SIZE); p <= Math.floor(to / PAGE_SIZE); p++) {
+        const page = get().pages[p];
+        if (!page || page.version !== get().version) await fetchPage(p);
+      }
+      if (get().queryKey !== queryKey) return;
+      const cur = get();
+      const picked = new Set<number>(add ? (cur.picked.size ? cur.picked : cur.selected ? [cur.selected.id] : []) : []);
+      for (let i = from; i <= to; i++) {
+        const r = get().rowAt(i);
+        if (r) picked.add(r.id);
+      }
+      const row = get().rowAt(index);
+      set({ picked: picked.size > 1 ? picked : new Set<number>(), ...(row ? { selected: row, selectedIndex: index } : {}) });
+    },
+
+    pickAll: async () => {
+      const s = get();
+      const { queryKey } = s;
+      try {
+        const ids = await api.queryIds(backendFilters(s));
+        if (get().queryKey !== queryKey) return;
+        set({ picked: ids.length > 1 ? new Set(ids) : new Set<number>() });
+        if (!get().selected && ids.length) void get().selectIndex(0, { play: false });
+      } catch (e) {
+        toast(errorMessage(e));
+      }
+    },
+
+    clearPicked: () => set({ picked: new Set<number>() }),
+
+    replaceRows: (rows) => {
+      const fresh = new Map(rows.map((r) => [r.id, r]));
+      rows.forEach((r) => rowPatchListeners.forEach((l) => l(r.id, r)));
+      set((s) => {
+        const pages: Record<number, Page> = {};
+        for (const [k, p] of Object.entries(s.pages)) {
+          pages[Number(k)] = p.rows.some((r) => fresh.has(r.id)) ? { ...p, rows: p.rows.map((r) => fresh.get(r.id) ?? r) } : p;
+        }
+        return { pages, selected: s.selected ? (fresh.get(s.selected.id) ?? s.selected) : null };
+      });
+    },
+
     toggleFavorite: (row) => {
       const favorite = !row.favorite;
       get().patchRow(row.id, { favorite });
@@ -330,6 +437,15 @@ export const useBrowse = create<BrowseState>((set, get) => {
     },
   };
 });
+
+/** Where a sample sits among the loaded rows, or -1. */
+function findLoaded(s: BrowseState, id: number): number {
+  for (const [k, p] of Object.entries(s.pages)) {
+    const i = p.rows.findIndex((r) => r.id === id);
+    if (i >= 0) return Number(k) * PAGE_SIZE + i;
+  }
+  return -1;
+}
 
 /** Kick off the first query. */
 export function startBrowsing() {

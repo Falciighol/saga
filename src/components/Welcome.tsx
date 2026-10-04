@@ -29,7 +29,7 @@ export function Welcome() {
         <div className="flex flex-col gap-3">
           <h1 className="m-0 text-[32px] leading-[1.1] font-semibold tracking-[-0.03em]">Point Saga at your samples.</h1>
           <p className="m-0 max-w-[480px] text-[14.5px] leading-normal text-pretty text-text2">
-            Saga indexes folders where they already are. Nothing gets moved, copied or renamed, and you can browse while it reads tempo, key and waveforms.
+            Saga indexes folders where they already are. Nothing gets moved or copied, files are only renamed when you ask, and you can browse while it reads tempo, key and waveforms.
           </p>
         </div>
 

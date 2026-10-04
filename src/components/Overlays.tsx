@@ -5,6 +5,7 @@ import { addToCollection, useDragState } from "../lib/actions";
 import { api } from "../lib/api";
 import { pixelRatio } from "../lib/scale";
 import { useSimilar } from "../store/similar";
+import { useBrowse } from "../store/browse";
 import { useToasts } from "../store/toasts";
 import { useUpdates } from "../store/updates";
 import { reviewFolders } from "./AddFolders";
@@ -13,8 +14,10 @@ import { cx } from "./ui";
 export function Toasts() {
   const toasts = useToasts((s) => s.toasts);
   const dismiss = useToasts((s) => s.dismiss);
+  // Above the selection bar while it shows.
+  const raised = useBrowse((s) => s.picked.size > 1);
   return (
-    <div aria-live="polite" className="pointer-events-none fixed bottom-[280px] left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
+    <div aria-live="polite" className={cx("pointer-events-none fixed left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2", raised ? "bottom-[336px]" : "bottom-[280px]")}>
       {toasts.map((t) => (
         <div
           key={t.id}
@@ -24,6 +27,18 @@ export function Toasts() {
           )}
         >
           <span>{t.message}</span>
+          {t.action && (
+            <button
+              type="button"
+              onClick={() => {
+                t.action!.run();
+                dismiss(t.id);
+              }}
+              className="h-6 rounded-md px-2 text-ui font-semibold text-accent-ink hover:bg-raised"
+            >
+              {t.action.label}
+            </button>
+          )}
           <button type="button" aria-label="Dismiss" onClick={() => dismiss(t.id)} className="grid h-6 w-6 place-items-center rounded-md text-text3 hover:text-text">
             <X size={13} />
           </button>

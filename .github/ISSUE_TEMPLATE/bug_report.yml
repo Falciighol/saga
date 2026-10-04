@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in Saga isn't working the way it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. The more specific you are, the faster this gets fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add a folder…
+        2. Search for…
+        3. …
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Saga version
+      description: Shown at the top of Settings.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 15.1 / Windows 11 23H2"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Library / indexing
+        - Search / filters
+        - Preview / playback
+        - Tempo or key detection
+        - Drag to DAW / rendering
+        - Rename
+        - Lab (key finder, sound map)
+        - Settings / updates
+        - Other
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Sample format (wav, mp3…), library size, external or network drives, DAW you dragged into. Screenshots welcome.

@@ -40,8 +40,10 @@ pub struct AppState {
     pub engine: Engine,
     /// Image shown under the cursor while dragging a sample out of the app.
     pub drag_icon: PathBuf,
-    /// Where renders and saved variations go (~/Music by default).
+    /// Where the default saved sounds folder lives (~/Music).
     pub music_dir: PathBuf,
+    /// Renders made ahead of time, until they're dragged out (see `render::SCRATCH_MAX_AGE`).
+    pub scratch_renders: PathBuf,
     /// Last file decoded for the editor's detailed waveform.
     pub detail: Mutex<Option<(i64, Arc<render::Detail>)>>,
     /// Features of every described sample, rebuilt when the library changes.
@@ -57,14 +59,30 @@ pub struct AppState {
     pub ui_scale: Mutex<f64>,
 }
 
+/// The setting that holds a chosen saved sounds folder; absent for the default.
+pub const SAVED_SOUNDS_SETTING: &str = "saved_sounds_dir";
+
 impl AppState {
-    pub fn new(db: Arc<Db>, indexer: Arc<Indexer>, engine: Engine, drag_icon: PathBuf, music_dir: PathBuf) -> AppState {
+    /// Where renders, Lab clips and saved variations go: the folder chosen in Settings, or ~/Music/Saga.
+    pub fn saved_root(&self) -> PathBuf {
+        match self.db.get_setting(SAVED_SOUNDS_SETTING) {
+            Some(p) if !p.is_empty() => PathBuf::from(p),
+            _ => self.default_saved_root(),
+        }
+    }
+
+    pub fn default_saved_root(&self) -> PathBuf {
+        self.music_dir.join("Saga")
+    }
+
+    pub fn new(db: Arc<Db>, indexer: Arc<Indexer>, engine: Engine, drag_icon: PathBuf, music_dir: PathBuf, scratch_renders: PathBuf) -> AppState {
         AppState {
             db,
             indexer,
             engine,
             drag_icon,
             music_dir,
+            scratch_renders,
             detail: Default::default(),
             sounds: Default::default(),
             layouts: Default::default(),
@@ -131,10 +149,17 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::query_samples,
             commands::get_facets,
             commands::get_sample,
+            commands::get_samples,
+            commands::query_ids,
             commands::library_stats,
             commands::index_progress,
             commands::set_favorite,
             commands::set_user_tags,
+            commands::set_sample_values,
+            commands::excluded_names,
+            commands::set_excluded_names,
+            commands::file_dates,
+            commands::rename_samples,
             commands::list_collections,
             commands::create_collection,
             commands::update_collection,
@@ -154,6 +179,8 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::list_installed_fonts,
             commands::set_output_device,
             commands::drag_icon,
+            commands::saved_sounds_dir,
+            commands::set_saved_sounds_dir,
             commands::suggested_folders,
             commands::set_params,
             commands::set_click,
@@ -163,6 +190,8 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::stop_sequence,
             commands::save_midi,
             commands::render_sample,
+            commands::renders_usage,
+            commands::clear_renders,
             commands::export_sample,
             commands::save_variation,
             commands::waveform_detail,
@@ -222,7 +251,13 @@ pub fn run() {
             }
 
             let music_dir = app.path().audio_dir().or_else(|_| app.path().home_dir().map(|h| h.join("Music")))?;
-            app.manage(AppState::new(db, indexer.clone(), engine, drag_icon, music_dir));
+            let scratch = cache_dir.join("renders");
+            let (db2, scratch2) = (db.clone(), scratch.clone());
+            std::thread::spawn(move || {
+                let gone = render::prune_scratch(&scratch2, render::SCRATCH_MAX_AGE, render::SCRATCH_MAX_BYTES, None);
+                let _ = db2.forget_renders(&gone.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>());
+            });
+            app.manage(AppState::new(db, indexer.clone(), engine, drag_icon, music_dir, scratch));
             indexer.resume_all();
             Ok(())
         })
@@ -294,7 +329,7 @@ mod ipc_tests {
         let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
         let indexer = Indexer::start(db.clone(), Arc::new(|_, _| {}));
         let engine = Engine::start(None, 0.8, Arc::new(|_| {}), Arc::new(|_| {}));
-        app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music")));
+        app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music"), data.path().join("cache/renders")));
         let w = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
 
         let lib_path = lib.path().to_string_lossy().to_string();
@@ -448,23 +483,45 @@ mod ipc_tests {
             "normalize": false, "crossfade": 0.01, "beat": 0.4839
         });
         let label = "155 BPM, Bm, reversed";
-        let rendered = call(&w, "render_sample", json!({ "id": bass_id, "params": params, "label": label })).unwrap();
-        let rendered = rendered.as_str().unwrap().to_string();
-        assert!(rendered.ends_with("Nightdrive_Bass_Loop_124_Am (155 BPM, Bm, reversed).wav"), "{rendered}");
-        let r = hound::WavReader::open(&rendered).unwrap();
+        let name = "Nightdrive_Bass_Loop_124_Am (155 BPM, Bm, reversed).wav";
+        // Made ahead of time, it waits in scratch.
+        let early = call(&w, "render_sample", json!({ "id": bass_id, "params": params, "label": label, "keep": false })).unwrap();
+        let early = early.as_str().unwrap().to_string();
+        assert!(Path::new(&early).starts_with(data.path().join("cache/renders")) && early.ends_with(name), "{early}");
+        let r = hound::WavReader::open(&early).unwrap();
         assert!((r.duration() as f64 / 44_100.0 - 3.871 / 1.25).abs() < 0.01);
+        drop(r);
         // Same request, same file; the click setting doesn't matter.
         let mut no_click = params.clone();
         no_click["beat"] = Value::Null;
-        let again = call(&w, "render_sample", json!({ "id": bass_id, "params": no_click, "label": label }));
-        assert_eq!(again, Ok(json!(rendered)));
+        let again = call(&w, "render_sample", json!({ "id": bass_id, "params": no_click, "label": label, "keep": false }));
+        assert_eq!(again, Ok(json!(early)));
+        // Dragging it out moves it into Music/Saga/Renders, and from then on that's the file.
+        let rendered = call(&w, "render_sample", json!({ "id": bass_id, "params": params, "label": label, "keep": true })).unwrap();
+        let rendered = rendered.as_str().unwrap().to_string();
+        assert_eq!(Path::new(&rendered), data.path().join("Music/Saga/Renders").join(name));
+        assert!(Path::new(&rendered).exists() && !Path::new(&early).exists());
+        for keep in [true, false] {
+            assert_eq!(call(&w, "render_sample", json!({ "id": bass_id, "params": no_click, "label": label, "keep": keep })), Ok(json!(rendered)));
+        }
+        // A new render dragged straight away skips scratch.
+        let mut louder = params.clone();
+        louder["gainDb"] = json!(0);
+        let direct = call(&w, "render_sample", json!({ "id": bass_id, "params": louder, "label": "louder", "keep": true })).unwrap();
+        assert!(Path::new(direct.as_str().unwrap()).starts_with(data.path().join("Music/Saga/Renders")), "{direct}");
+        let usage = call(&w, "renders_usage", json!({})).unwrap();
+        assert_eq!((usage["all"]["files"].clone(), usage["olderThanMonth"]["files"].clone(), usage["scratch"]["files"].clone()), (json!(2), json!(0), json!(0)));
+        // Nothing is a month old, so clearing those leaves everything in place.
+        let cleared = call(&w, "clear_renders", json!({ "olderThanDays": 30 })).unwrap();
+        assert_eq!((cleared["cleared"]["files"].clone(), cleared["failed"].clone(), cleared["usage"]["all"]["files"].clone()), (json!(0), json!(0), json!(2)));
+        assert!(Path::new(&rendered).exists());
 
         let export = data.path().join("exported.wav");
         call(&w, "export_sample", json!({ "id": bass_id, "params": params, "dest": export.to_string_lossy() })).unwrap();
         assert!(export.exists());
 
         let variation = call(&w, "save_variation", json!({ "id": bass_id, "params": params, "label": label })).unwrap();
-        assert!(variation.as_str().unwrap().contains("Saga/Variations"));
+        assert!(Path::new(variation.as_str().unwrap()).parent().unwrap().ends_with("Saga/Variations"));
         let sources = call(&w, "list_sources", json!({})).unwrap();
         assert!(sources.as_array().unwrap().iter().any(|s| s["name"] == "Variations"));
 
@@ -481,10 +538,13 @@ mod ipc_tests {
         assert!(call(&w, "stop_notes", json!({})).is_ok());
         assert!(call(&w, "stop_sequence", json!({})).is_ok());
         // A Lab progression as a MIDI clip in Music/Saga/Renders; dragging it twice reuses the file.
-        let midi = json!({
-            "notes": [{ "note": 57, "start": 0, "length": 3.9, "velocity": 0.7 }, { "note": 60, "start": 4, "length": 3.9 }],
-            "beats": 8, "bpm": 124, "name": "Night drive", "label": "124 BPM, A min"
-        });
+        let midi_body = || {
+            json!({
+                "notes": [{ "note": 57, "start": 0, "length": 3.9, "velocity": 0.7 }, { "note": 60, "start": 4, "length": 3.9 }],
+                "beats": 8, "bpm": 124, "name": "Night drive", "label": "124 BPM, A min"
+            })
+        };
+        let midi = midi_body();
         let path = call(&w, "save_midi", midi.clone()).unwrap();
         let path = path.as_str().unwrap();
         assert!(path.ends_with("Night drive (124 BPM, A min).mid"), "{path}");
@@ -500,6 +560,7 @@ mod ipc_tests {
             ("stop", json!({})),
             ("index_progress", json!({})),
             ("drag_icon", json!({})),
+            ("saved_sounds_dir", json!({})),
             ("rescan_source", json!({ "id": source_id })),
         ] {
             assert!(call(&w, cmd, body).is_ok(), "{cmd}");
@@ -513,5 +574,17 @@ mod ipc_tests {
         assert_eq!(left["rows"][0]["name"], "Nightdrive_Bass_Loop_124_Am (155 BPM, Bm, reversed)");
         assert_eq!(left["rows"][0]["bpm"], 155.0);
         assert_eq!(left["rows"][0]["key"], "Bm");
+
+        // The saved sounds folder can be moved; new clips follow it, and the default comes back with null.
+        assert_eq!(call(&w, "saved_sounds_dir", json!({})).unwrap()["isDefault"], true);
+        let moved = data.path().join("moved");
+        let set = call(&w, "set_saved_sounds_dir", json!({ "path": moved.to_string_lossy() })).unwrap();
+        assert_eq!(set["isDefault"], false);
+        assert_eq!(set["path"], json!(moved.to_string_lossy()));
+        let mut elsewhere = midi_body();
+        elsewhere["name"] = json!("Elsewhere");
+        let clip = call(&w, "save_midi", elsewhere).unwrap();
+        assert!(Path::new(clip.as_str().unwrap()).starts_with(moved.join("Renders")), "{clip}");
+        assert_eq!(call(&w, "set_saved_sounds_dir", json!({ "path": null })).unwrap()["isDefault"], true);
     }
 }

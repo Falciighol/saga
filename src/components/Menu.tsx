@@ -61,7 +61,7 @@ function MenuList({ items, x, y, minWidth, onDone }: { items: MenuItem[]; x: num
       <div
         ref={ref}
         role="menu"
-        className="animate-pop fixed z-50 max-h-[70vh] overflow-y-auto rounded-xl border border-line2 bg-panel p-1 shadow-pop"
+        className="animate-pop fixed z-[70] max-h-[70vh] overflow-y-auto rounded-xl border border-line2 bg-panel p-1 shadow-pop"
         style={{ left: pos.x, top: pos.y, minWidth: Math.max(180, minWidth && minWidth > 0 ? minWidth : 0) }}
         onContextMenu={(e) => e.preventDefault()}
       >
@@ -139,7 +139,7 @@ export function MenuHost() {
   return (
     <>
       <div
-        className="fixed inset-0 z-40"
+        className="fixed inset-0 z-[60]"
         onMouseDown={close}
         onContextMenu={(e) => {
           e.preventDefault();
