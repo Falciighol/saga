@@ -117,8 +117,10 @@ mkdirSync(out);
 const archiveName = "Saga_universal.app.tar.gz";
 const dmgName = basename(dmg);
 copyFileSync(dmg, join(out, dmgName));
+// The updater downloads this archive (latest.json points at it), so it has to be on the release.
+copyFileSync(archive, join(out, archiveName));
 const signature = readFileSync(`${archive}.sig`, "utf8").trim();
-const assets = [dmgName];
+const assets = [dmgName, archiveName];
 
 /** Runs gh without stopping the script; null means it failed. */
 const gh = (args, opts = {}) => run("gh", args, { allowFail: true, ...opts });
@@ -144,7 +146,7 @@ if (found == null) {
 
 if (!todo.uploads) {
   if (gh(["release", "upload", tag, "-R", repo, "--clobber", ...assets.map((f) => join(out, f))], { inherit: true }) == null) {
-    console.log("  gh couldn't upload the installer");
+    console.log("  gh couldn't upload the installer and update bundle");
     todo.uploads = true;
   }
 }
@@ -193,5 +195,5 @@ if (!todo.draft && !todo.uploads && !todo.latest) {
     console.log(`     download it, copy the darwin-aarch64 and darwin-x86_64 entries under "platforms" from ${latestPath} into it,`);
     console.log("     and upload the result over the draft's copy. Its \"version\" must be " + `"${version}".`);
   }
-  console.log(`  ${++n}. Check the draft lists the .dmg, the Windows setup .exe and a latest.json with darwin-aarch64, darwin-x86_64 and windows-x86_64, then publish it.`);
+  console.log(`  ${++n}. Check the draft lists the .dmg, the Mac update bundle (.app.tar.gz), the Windows setup .exe and a latest.json with darwin-aarch64, darwin-x86_64 and windows-x86_64, then publish it.`);
 }

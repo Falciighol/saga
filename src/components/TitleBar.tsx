@@ -7,6 +7,7 @@ import { useLibrary } from "../store/library";
 import { useUi } from "../store/ui";
 import { ProjectControls } from "./ProjectControls";
 import { cx, Divider, IconButton, Kbd } from "./ui";
+import { UpdateIndicator } from "./UpdateIndicator";
 import { WindowControls } from "./WindowControls";
 
 export function Logo({ size = 18 }: { size?: number }) {
@@ -64,6 +65,7 @@ export const TitleBar = forwardRef<HTMLInputElement, { onOpenSettings: () => voi
       <IconButton label="Switch to the mini player" title="Mini player: a small window that stays next to your DAW" onClick={() => useUi.getState().setMini(true)}>
         <PictureInPicture2 size={16} strokeWidth={1.75} />
       </IconButton>
+      <UpdateIndicator />
       <IconButton label="Settings" onClick={onOpenSettings}>
         <Settings2 size={16} strokeWidth={1.75} />
       </IconButton>
