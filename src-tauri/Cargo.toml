@@ -1,6 +1,6 @@
 [package]
 name = "saga"
-version = "1.0.1"
+version = "1.0.2"
 description = "A fast, smart sample browser for music producers"
 authors = ["falcighol"]
 license-file = "../LICENSE"
