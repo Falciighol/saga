@@ -118,9 +118,8 @@ const archiveName = "Saga_universal.app.tar.gz";
 const dmgName = basename(dmg);
 copyFileSync(dmg, join(out, dmgName));
 copyFileSync(archive, join(out, archiveName));
-copyFileSync(`${archive}.sig`, join(out, `${archiveName}.sig`));
 const signature = readFileSync(`${archive}.sig`, "utf8").trim();
-const assets = [dmgName, archiveName, `${archiveName}.sig`];
+const assets = [dmgName, archiveName];
 
 /** Runs gh without stopping the script; null means it failed. */
 const gh = (args, opts = {}) => run("gh", args, { allowFail: true, ...opts });

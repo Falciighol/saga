@@ -74,7 +74,6 @@ step("Collecting the files to upload");
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out);
 copyFileSync(installer, join(out, installerName));
-copyFileSync(`${installer}.sig`, join(out, `${installerName}.sig`));
 
 /** Runs gh without stopping the script; null means it failed. */
 const gh = (args, opts = {}) => run("gh", args, { allowFail: true, ...opts });
@@ -99,7 +98,7 @@ if (found == null) {
 }
 
 if (!todo.uploads) {
-  if (gh(["release", "upload", tag, "-R", repo, "--clobber", join(out, installerName), join(out, `${installerName}.sig`)], { inherit: true }) == null) {
+  if (gh(["release", "upload", tag, "-R", repo, "--clobber", join(out, installerName)],{ inherit: true }) == null) {
     console.log("  gh couldn't upload the installer");
     todo.uploads = true;
   }
@@ -136,7 +135,7 @@ if (!todo.uploads && !todo.latest) {
   process.exitCode = 1;
   console.log(`\n! The build is done and its files are in ${out}, but gh couldn't finish. Still to do by hand at ${releasesUrl}:`);
   let n = 0;
-  if (todo.uploads) console.log(`  ${++n}. Upload ${installerName} and ${installerName}.sig from ${out} to the ${tag} draft (the Release workflow opens it).`);
+  if (todo.uploads) console.log(`  ${++n}. Upload ${installerName} from ${out} to the ${tag} draft (the Release workflow opens it).`);
   if (todo.latest === "merged") {
     console.log(`  ${++n}. Upload ${latestPath} to the draft, replacing its latest.json. It is already merged with the draft's.`);
   } else if (todo.latest === "unmerged") {
