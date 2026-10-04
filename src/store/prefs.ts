@@ -22,6 +22,8 @@ export interface PrefValues {
   monoInstalled: string | null;
   /** Interface zoom, 1 = 100%. */
   uiScale: number;
+  /** Width of the library sidebar in interface pixels; drag its edge to change it. */
+  sidebarWidth: number;
   volume: number;
   /** Play a sample as soon as it's selected. */
   autoplay: boolean;
@@ -58,6 +60,7 @@ export const DEFAULT_PREFS: PrefValues = {
   monoFont: "geist-mono",
   monoInstalled: null,
   uiScale: 1,
+  sidebarWidth: 232,
   volume: 0.8,
   autoplay: true,
   loopLoops: true,

@@ -9,6 +9,7 @@ import { COLLECTION_COLORS } from "../lib/theme";
 import type { DirNode, SourceInfo } from "../lib/types";
 import { useBrowse, type View } from "../store/browse";
 import { dirKey, useLibrary } from "../store/library";
+import { DEFAULT_PREFS, usePrefs } from "../store/prefs";
 import { toast } from "../store/toasts";
 import { reviewFolders } from "./AddFolders";
 import { openContextMenu } from "./Menu";
@@ -203,7 +204,67 @@ export async function chooseFolders() {
   await reviewFolders(paths);
 }
 
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 520;
+const clampSidebar = (w: number) => Math.round(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, w)));
+
+/** The sidebar's right edge: drag to resize, arrow keys to nudge, double-click to go back to the default width. */
+function ResizeHandle({ width }: { width: number }) {
+  const set = usePrefs((s) => s.set);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const target = e.currentTarget;
+    target.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const start = width;
+    const move = (ev: PointerEvent) => set({ sidebarWidth: clampSidebar(start + ev.clientX - startX) });
+    const end = () => {
+      target.removeEventListener("pointermove", move);
+      target.removeEventListener("pointerup", end);
+      target.removeEventListener("pointercancel", end);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    target.addEventListener("pointermove", move);
+    target.addEventListener("pointerup", end);
+    target.addEventListener("pointercancel", end);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.shiftKey ? 40 : 10;
+    const current = usePrefs.getState().sidebarWidth;
+    if (e.key === "ArrowLeft") set({ sidebarWidth: clampSidebar(current - step) });
+    else if (e.key === "ArrowRight") set({ sidebarWidth: clampSidebar(current + step) });
+    else return;
+    e.preventDefault();
+  };
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuenow={width}
+      aria-valuemin={SIDEBAR_MIN}
+      aria-valuemax={SIDEBAR_MAX}
+      tabIndex={0}
+      title="Drag to resize, double-click to reset"
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => set({ sidebarWidth: DEFAULT_PREFS.sidebarWidth })}
+      className="group absolute inset-y-0 -right-[3px] z-20 w-[6px] cursor-col-resize touch-none outline-none"
+    >
+      <span className="absolute inset-y-0 left-[2px] w-px bg-accent opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-active:opacity-100" />
+    </div>
+  );
+}
+
 export function Sidebar() {
+  const width = clampSidebar(usePrefs((s) => s.sidebarWidth));
   const stats = useLibrary((s) => s.stats);
   const collections = useLibrary((s) => s.collections);
   const sources = useLibrary((s) => s.sources);
@@ -278,7 +339,8 @@ export function Sidebar() {
     ]);
 
   return (
-    <nav aria-label="Library" className="flex w-[232px] shrink-0 flex-col border-r border-line bg-panel">
+    <nav aria-label="Library" style={{ width }} className="relative flex shrink-0 flex-col border-r border-line bg-panel">
+      <ResizeHandle width={width} />
       <div className="flex min-h-0 flex-1 flex-col gap-[22px] overflow-y-auto px-2.5 py-3.5">
         <div className="flex flex-col gap-px">
           <SectionLabel className="px-2.5 pb-1.5">Library</SectionLabel>

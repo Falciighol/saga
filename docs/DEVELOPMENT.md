@@ -121,8 +121,8 @@ npm run release:windows   # on the Windows PC
    CI. Edit the draft's "What's new" before publishing.
 3. `npm run release:mac` builds the Mac version on your Mac: one universal app for Apple Silicon
    and Intel, signed with your Developer ID and notarized by Apple (notarizing in CI would use up
-   the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the
-   signed update bundle to the draft, and adds the Mac entries to `latest.json`. It never creates
+   the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg to the draft (not the
+   update bundle), and adds the Mac entries to `latest.json`. It never creates
    a release: if the workflow hasn't opened the draft yet, it stops and tells you to wait for it.
 4. `npm run release:windows` builds the NSIS installer on the PC (not code-signed, so Windows
    shows an "unknown publisher" warning), uploads the `-setup.exe` to the draft (the `.sig` isn't
