@@ -49,6 +49,23 @@ export const PRESETS: { label: string; template: string }[] = [
 const BAD_CHARS = /[/\\:*?"<>|\u0000-\u001f]/;
 const SEPARATORS = /^[\s_\-.,]+$/;
 
+/** Takes every copy of a token out of the template, with the separator before it (or after it, at
+ *  the start), so "{name}_{bpm}_{key}" becomes "{name}_{key}". Typed words around it stay. */
+export function removeToken(template: string, token: string): string {
+  const re = new RegExp(`\\{${token.slice(1, -1)}\\}`, "i");
+  let out = template;
+  for (let m = re.exec(out); m; m = re.exec(out)) {
+    let start = m.index;
+    let end = start + m[0].length;
+    const before = /[\s_\-.,]+$/.exec(out.slice(0, start));
+    const after = /^[\s_\-.,]+/.exec(out.slice(end));
+    if (before) start -= before[0].length;
+    else if (after) end += after[0].length;
+    out = out.slice(0, start) + out.slice(end);
+  }
+  return out;
+}
+
 export function keyForName(row: Pick<SampleRow, "keyPc" | "keyMode">, style: KeyStyle, relativeMajor: boolean): string {
   if (row.keyPc == null || row.keyMode == null) return "";
   let pc = row.keyPc;

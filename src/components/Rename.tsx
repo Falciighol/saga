@@ -2,7 +2,7 @@ import { ArrowRight, ChevronDown, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { api, errorMessage } from "../lib/api";
-import { DEFAULT_PATTERN, planRenames, PRESETS, TOKENS, type DateStyle, type KeyStyle, type RenamePattern } from "../lib/rename";
+import { DEFAULT_PATTERN, planRenames, PRESETS, removeToken, TOKENS, type DateStyle, type KeyStyle, type RenamePattern } from "../lib/rename";
 import type { SampleRow } from "../lib/types";
 import { useBrowse } from "../store/browse";
 import { usePrefs } from "../store/prefs";
@@ -112,6 +112,15 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
     });
   };
 
+  /** Puts the cursor back at the end of the name after a tag is taken out or the name cleared. */
+  const replace = (template: string) => {
+    set({ template });
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(template.length, template.length);
+    });
+  };
+
   const submit = async () => {
     if (!ready.length || busy) return;
     setBusy(true);
@@ -194,8 +203,9 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
                 <button
                   key={t.token}
                   type="button"
-                  title={t.title}
-                  onClick={() => insert(t.token)}
+                  title={uses(t.token) ? `${t.title}. Click again to take it out` : t.title}
+                  aria-pressed={uses(t.token)}
+                  onClick={() => (uses(t.token) ? replace(removeToken(p.template, t.token)) : insert(t.token))}
                   className={cx(
                     "flex h-6 items-center rounded-md border px-2 text-small transition-colors",
                     uses(t.token) ? "border-accent bg-accent-soft text-accent-ink" : "border-line2 text-text2 hover:bg-raised hover:text-text",
@@ -204,6 +214,14 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
                   {t.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => replace("")}
+                disabled={!p.template}
+                className="ml-auto flex h-6 items-center rounded-md px-2 text-small text-text3 hover:bg-raised hover:text-text disabled:pointer-events-none disabled:opacity-40"
+              >
+                Clear
+              </button>
             </div>
           </div>
 

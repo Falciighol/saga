@@ -77,7 +77,7 @@ turn on **Tempos with two decimals** in Settings.
 
 Select samples and choose **Rename…** to write what Saga knows into the file names. Build the new
 name from tokens (the current name, key, BPM, date created, category) and any text, or pick a
-preset like `{name}_{bpm}_{key}`. Choose how keys are written (`F#m`, `F#min`, `F# minor` or
+preset like `{name}_{bpm}_{key}`. Click a token again to take it out, or **Clear** to start over. Choose how keys are written (`F#m`, `F#min`, `F# minor` or
 Camelot `11A`), optionally as their relative major (`F#m` becomes `A`), and whether tempos are
 rounded. Values a name already has are left out, so `Loop_124_Am` doesn't become
 `Loop_124_Am_124_Am`. A preview shows every new name and any clash before anything changes.
