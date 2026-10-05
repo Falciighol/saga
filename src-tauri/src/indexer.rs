@@ -11,7 +11,7 @@ use crate::model::{IndexProgress, SourceInfo};
 use crossbeam_channel::{unbounded, RecvTimeoutError, Sender};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, Debouncer};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -38,6 +38,8 @@ struct Counters {
     /// Queued files that were analyzed before, by an older version.
     refresh_left: AtomicU64,
     library_dirty: AtomicBool,
+    /// Something the user is waiting for was stored: tell the UI on the next tick.
+    library_now: AtomicBool,
     progress_dirty: AtomicBool,
 }
 
@@ -46,29 +48,77 @@ pub struct Indexer {
     scan_tx: Sender<ScanJob>,
     /// Scan jobs sent but not finished (including queueing their files for analysis).
     jobs: Arc<AtomicUsize>,
-    analyze_tx: Sender<PendingFile>,
-    /// Queued ids, and whether each is a refresh of an older analysis.
-    queued: Mutex<HashMap<i64, bool>>,
+    /// Ids waiting for analysis. The files themselves wait in `queued`.
+    analyze_tx: Sender<i64>,
+    /// The sample to analyze ahead of the queue (see `prioritize`).
+    urgent: LatestSlot,
+    queued: Mutex<HashMap<i64, Queued>>,
     counters: Counters,
     watchers: Mutex<HashMap<i64, Debouncer<RecommendedWatcher>>>,
     /// Held while Saga renames files itself; scans wait for it (see `hold_rescans`).
     renaming: Mutex<()>,
 }
 
+/// A file waiting for analysis, until its result is stored.
+struct Queued {
+    /// Analyzed before, by an older version.
+    refresh: bool,
+    /// Taken by whoever analyzes it first (a worker, or `prioritize`), so it's analyzed once.
+    job: Option<PendingFile>,
+}
+
+/// One waiting id, where a newer one replaces it. Browsing fast through a list analyzes the row
+/// you stop on, not every row you passed.
+#[derive(Default)]
+struct LatestSlot {
+    id: Mutex<Option<i64>>,
+    ready: Condvar,
+}
+
+impl LatestSlot {
+    fn put(&self, id: i64) {
+        *self.id.lock() = Some(id);
+        self.ready.notify_one();
+    }
+
+    /// Waits for an id and takes it.
+    fn take(&self) -> i64 {
+        let mut slot = self.id.lock();
+        loop {
+            if let Some(id) = slot.take() {
+                return id;
+            }
+            self.ready.wait(&mut slot);
+        }
+    }
+}
+
+/// Sets the calling thread's macOS quality of service class.
+#[cfg(target_os = "macos")]
+fn set_thread_qos(qos_class: u32) {
+    extern "C" {
+        fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
+    }
+    // SAFETY: only changes the scheduling class of the calling thread.
+    unsafe {
+        pthread_set_qos_class_self_np(qos_class, 0);
+    }
+}
+
 /// Background work should never compete with the DAW for CPU: on macOS, run it at
 /// "utility" quality of service so the scheduler favors efficiency cores and real-time threads.
 fn lower_thread_priority() {
     #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
-        }
-        const QOS_CLASS_UTILITY: u32 = 0x11;
-        // SAFETY: only changes the scheduling class of the calling thread.
-        unsafe {
-            pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
-        }
-    }
+    set_thread_qos(0x11); // QOS_CLASS_UTILITY
+}
+
+/// Analysis someone is waiting for (the sample they just played): on macOS, "user initiated"
+/// quality of service, which Apple gives to work a user waits on. It's above the background
+/// workers and the default class, but only one thread runs at it, and the DAW's real-time audio
+/// threads still come first.
+fn waited_on_thread_priority() {
+    #[cfg(target_os = "macos")]
+    set_thread_qos(0x19); // QOS_CLASS_USER_INITIATED
 }
 
 const WRITE_BATCH: usize = 64;
@@ -192,13 +242,15 @@ fn analyze_one(job: &PendingFile) -> AnalysisOutcome {
 impl Indexer {
     pub fn start(db: Arc<Db>, emit: Emit) -> Arc<Indexer> {
         let (scan_tx, scan_rx) = unbounded::<ScanJob>();
-        let (analyze_tx, analyze_rx) = unbounded::<PendingFile>();
-        let (result_tx, result_rx) = unbounded::<AnalysisOutcome>();
+        let (analyze_tx, analyze_rx) = unbounded::<i64>();
+        // Finished analyses on their way to the writer, and whether someone is waiting for each.
+        let (result_tx, result_rx) = unbounded::<(AnalysisOutcome, bool)>();
         let indexer = Arc::new(Indexer {
             db,
             scan_tx,
             jobs: Arc::new(AtomicUsize::new(0)),
             analyze_tx,
+            urgent: LatestSlot::default(),
             queued: Mutex::new(HashMap::new()),
             counters: Counters::default(),
             watchers: Mutex::new(HashMap::new()),
@@ -238,15 +290,17 @@ impl Indexer {
         for i in 0..workers {
             let rx = analyze_rx.clone();
             let tx = result_tx.clone();
-            let db = indexer.db.clone();
+            let me = indexer.clone();
             std::thread::Builder::new()
                 .name(format!("saga-analyze-{i}"))
                 .spawn(move || {
                     lower_thread_priority();
-                    for job in rx {
+                    for id in rx {
+                        // Already analyzed ahead of the queue (see `prioritize`).
+                        let Some(job) = me.take_job(id) else { continue };
                         // Queued, then removed or excluded: there's nothing left to describe.
-                        let outcome = if db.has_sample(job.id) { analyze_one(&job) } else { AnalysisOutcome { id: job.id, result: Err("No longer in the library".into()) } };
-                        if tx.send(outcome).is_err() {
+                        let outcome = if me.db.has_sample(id) { analyze_one(&job) } else { AnalysisOutcome { id, result: Err("No longer in the library".into()) } };
+                        if tx.send((outcome, false)).is_err() {
                             break;
                         }
                     }
@@ -254,16 +308,39 @@ impl Indexer {
                 .expect("spawn analysis worker");
         }
 
+        // One thread for samples someone is waiting for, so playing through a list never runs
+        // more than one of these analyses at a time.
+        let me = indexer.clone();
+        let tx = result_tx.clone();
+        std::thread::Builder::new()
+            .name("saga-analyze-now".into())
+            .spawn(move || {
+                waited_on_thread_priority();
+                loop {
+                    let id = me.urgent.take();
+                    let Some(job) = me.take_job(id) else { continue };
+                    // No `has_sample` check like the workers': `play` just found the sample, and
+                    // `apply_analysis` skips ids removed since.
+                    if tx.send((analyze_one(&job), true)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawn priority analysis thread");
+
         let me = indexer.clone();
         std::thread::Builder::new()
             .name("saga-write".into())
             .spawn(move || {
                 let mut batch: Vec<AnalysisOutcome> = Vec::new();
+                let mut waited_on = false;
                 loop {
                     match result_rx.recv_timeout(Duration::from_millis(300)) {
-                        Ok(o) => {
+                        Ok((o, urgent)) => {
                             batch.push(o);
-                            if batch.len() < WRITE_BATCH {
+                            waited_on |= urgent;
+                            // Someone is waiting for this one: store it now, not with a full batch.
+                            if !urgent && batch.len() < WRITE_BATCH {
                                 continue;
                             }
                         }
@@ -278,13 +355,16 @@ impl Indexer {
                     }
                     let mut q = me.queued.lock();
                     for o in &batch {
-                        if q.remove(&o.id) == Some(true) {
+                        if q.remove(&o.id).is_some_and(|e| e.refresh) {
                             me.counters.refresh_left.fetch_sub(1, Ordering::Relaxed);
                         }
                     }
                     drop(q);
                     me.counters.done.fetch_add(batch.len() as u64, Ordering::Relaxed);
                     me.counters.library_dirty.store(true, Ordering::Relaxed);
+                    if std::mem::take(&mut waited_on) {
+                        me.counters.library_now.store(true, Ordering::Relaxed);
+                    }
                     me.counters.progress_dirty.store(true, Ordering::Relaxed);
                     batch.clear();
                 }
@@ -303,7 +383,9 @@ impl Indexer {
                     if me.counters.progress_dirty.swap(false, Ordering::Relaxed) {
                         emit("index-progress", serde_json::to_value(me.progress()).unwrap_or_default());
                     }
-                    if tick.is_multiple_of(4) && me.counters.library_dirty.swap(false, Ordering::Relaxed) {
+                    // About once a second, or on the next tick when someone is waiting.
+                    let now = me.counters.library_now.swap(false, Ordering::Relaxed);
+                    if (now || tick.is_multiple_of(4)) && me.counters.library_dirty.swap(false, Ordering::Relaxed) {
                         emit("library-changed", serde_json::Value::Null);
                     }
                     if tick.is_multiple_of(80) {
@@ -615,15 +697,29 @@ impl Indexer {
         let mut q = self.queued.lock();
         for p in pending {
             if let std::collections::hash_map::Entry::Vacant(e) = q.entry(p.id) {
-                e.insert(p.refresh);
+                let id = p.id;
                 self.counters.total.fetch_add(1, Ordering::Relaxed);
                 if p.refresh {
                     self.counters.refresh_left.fetch_add(1, Ordering::Relaxed);
                 }
-                let _ = self.analyze_tx.send(p);
+                e.insert(Queued { refresh: p.refresh, job: Some(p) });
+                let _ = self.analyze_tx.send(id);
             }
         }
         self.counters.progress_dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Claims a queued file for analysis. None when it isn't queued, or someone already took it.
+    fn take_job(&self, id: i64) -> Option<PendingFile> {
+        self.queued.lock().get_mut(&id).and_then(|q| q.job.take())
+    }
+
+    /// Has a queued sample analyzed next, ahead of everything else waiting, because someone is
+    /// listening to it. Returns at once. One sample at a time: a newer call replaces one that
+    /// hasn't started yet, which then waits in the queue as before. Samples that aren't waiting
+    /// are skipped.
+    pub fn prioritize(&self, id: i64) {
+        self.urgent.put(id);
     }
 
     /// Holds back scans while Saga renames files itself, so the folder watcher never looks at a
@@ -854,5 +950,66 @@ mod tests {
         wait_idle(&ix);
         assert_eq!(names(&db), vec!["Bass", "Vocals", "Vox_Hey", "Vox_New"]);
         assert_eq!(ix.excluded_names(), vec!["dr*"]);
+    }
+
+    /// A library with one analyzed sample, set back to "waiting for analysis" and queued without
+    /// telling the workers, so only `prioritize` or the test itself can pick it up.
+    fn one_waiting_sample() -> (tempfile::TempDir, tempfile::TempDir, Arc<Db>, Arc<Indexer>, i64) {
+        use crate::model::{KeyChange, TempoChange};
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_wav(&lib.path().join("Pack/Bass_Loop_120_Am.wav"), 2.0);
+        let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
+        let ix = Indexer::start(db.clone(), Arc::new(|_, _| {}));
+        ix.add_source(&lib.path().to_string_lossy(), &[]).unwrap();
+        wait_idle(&ix);
+        let id = all(&db)[0].id;
+        db.set_user_values(&[id], Some(&TempoChange::Bpm { bpm: 90.0 }), Some(&KeyChange::NoKey)).unwrap();
+        assert!(db.set_user_values(&[id], Some(&TempoChange::Detected), Some(&KeyChange::Detected)).unwrap());
+        assert_eq!(all(&db)[0].status, 0);
+        let job = db.pending(None).unwrap().into_iter().find(|p| p.id == id).unwrap();
+        ix.queued.lock().insert(id, Queued { refresh: false, job: Some(job) });
+        (lib, data, db, ix, id)
+    }
+
+    #[test]
+    fn a_queued_file_is_handed_out_once() {
+        let (_lib, _data, _db, ix, id) = one_waiting_sample();
+        assert!(ix.take_job(id).is_some());
+        // Whoever comes second (a worker, or the priority thread) finds nothing to analyze.
+        assert!(ix.take_job(id).is_none());
+        // It stays queued until its result is stored.
+        assert!(ix.queued.lock().contains_key(&id));
+    }
+
+    #[test]
+    fn the_latest_waiting_sample_replaces_an_older_one() {
+        let slot = Arc::new(LatestSlot::default());
+        slot.put(1);
+        slot.put(2);
+        assert_eq!(slot.take(), 2);
+        // Taking waits for the next one.
+        let later = slot.clone();
+        let putter = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            later.put(3);
+        });
+        assert_eq!(slot.take(), 3);
+        putter.join().unwrap();
+    }
+
+    #[test]
+    fn a_sample_being_played_is_analyzed_ahead_of_the_queue_and_only_once() {
+        // `total` stays 0, so the idle reset leaves `done` alone and it counts every result stored.
+        let (_lib, _data, db, ix, id) = one_waiting_sample();
+        assert_eq!(ix.counters.done.load(Ordering::Relaxed), 0);
+        ix.prioritize(id);
+        wait_idle(&ix);
+        assert_eq!(all(&db)[0].status, 1);
+        assert_eq!(ix.counters.done.load(Ordering::Relaxed), 1, "analyzed and stored once");
+        // Nothing waiting any more: playing it again does nothing.
+        ix.prioritize(id);
+        wait_idle(&ix);
+        assert_eq!(ix.counters.done.load(Ordering::Relaxed), 1);
     }
 }

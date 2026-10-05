@@ -320,6 +320,8 @@ pub async fn play(state: State<'_, AppState>, id: i64, start: Option<f64>, loopi
     let path = source_path(&state, id)?;
     state.engine.send(Cmd::Play { id, path, start, looping, params: params.unwrap_or_default() });
     let _ = state.db.mark_played(id);
+    // A sample still waiting for analysis gets its waveform, tempo and key now, not after the queue.
+    state.indexer.prioritize(id);
     Ok(())
 }
 
