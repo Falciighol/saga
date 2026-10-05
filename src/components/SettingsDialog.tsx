@@ -7,7 +7,7 @@ import { api, errorMessage } from "../lib/api";
 import { MONO_FONTS, MONO_ORDER, SANS_FONTS, SANS_ORDER } from "../lib/fonts";
 import { fmtBytes, fmtCount } from "../lib/format";
 import { forgetRenders } from "../lib/renders";
-import { modKey, revealLabel } from "../lib/platform";
+import { altKey, modKey, revealLabel } from "../lib/platform";
 import { SCALES } from "../lib/scale";
 import { ACCENT_ORDER, ACCENTS, type ThemePref } from "../lib/theme";
 import type { FileCount, RendersUsage, SavedSounds, SourceInfo } from "../lib/types";
@@ -384,7 +384,10 @@ const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
       [[`${modKey} ⇧ F`], "Open filters"],
       [["Esc"], "Clear the selection or search, close the editor, or stop"],
       [[`${modKey} A`], "Select all results"],
+      [[`${modKey} R`], "Rename the selected samples"],
+      [[`${modKey} ⇧ R`], revealLabel()],
       [[`${modKey} / ⇧ click`], "Select several samples"],
+      [[`${altKey} click`], "On a folder's arrow: close every folder inside too"],
       [[`${modKey} ,`], "Settings"],
       [[`${modKey} + −`], "Interface bigger / smaller"],
       [[`${modKey} 0`], "Interface at 100%"],

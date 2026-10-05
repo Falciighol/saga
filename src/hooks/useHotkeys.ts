@@ -7,7 +7,7 @@ import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { editFor, stepPitch, useEdits, useProject } from "../store/project";
 import { useTapTempo } from "../components/ProjectControls";
-import { findSimilar, removeFromCollection, toggleLoop } from "../lib/actions";
+import { findSimilar, removeFromCollection, renameTargets, reveal, toggleLoop } from "../lib/actions";
 import { stepScale } from "../lib/scale";
 import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
 import { scaleChords } from "../lib/theory";
@@ -83,6 +83,18 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       if (hasMod(e) && !e.shiftKey && e.key.toLowerCase() === "a" && !typing && ui.view === "list" && !ui.mini && !editing) {
         e.preventDefault();
         void browse.pickAll();
+        return;
+      }
+      // Rename the picked samples (or the selected one), and with Shift show the selected file in Finder or Explorer.
+      // The web view would reload on Mod+R, so the key is always swallowed, even while typing in another field.
+      if (hasMod(e) && !e.altKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        if (typing && !inSearch) return;
+        if (e.shiftKey) {
+          if (row) void reveal(row.path);
+        } else {
+          void renameTargets();
+        }
         return;
       }
       if (hasMod(e) && e.key === ",") {

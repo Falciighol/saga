@@ -39,6 +39,8 @@ and choose **Exclude from library**, or pick folders to leave out from Settings;
 come back from the library folder's right-click menu or Settings. To leave out a kind of folder
 everywhere, like the `Vocals` folder inside every pack, add its name under **Leave out folders
 named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem Mixes`).
+To tidy the folder list, `⌥`/`Alt`-click a folder's arrow to fold it with everything inside, right-click a
+folder › **Collapse subfolders**, or use the button next to **Folders** to close them all.
 
 - **Instant search** over names, folders, categories and tags, plus [field syntax](#search-syntax)
   like `bpm:120-128 key:Am+ is:loop`.
@@ -213,6 +215,9 @@ On Windows, use Ctrl where these say ⌘.
 | `⌘⇧F` | Filters |
 | `Esc` | Clear the selection or search, close the editor, or stop |
 | `⌘A` | Select all results (`⌘`-click or `⇧`-click to select several) |
+| `⌘R` | Rename the selected samples |
+| `⌘⇧R` | Reveal in Finder (Show in folder on Windows) |
+| `⌥`/`Alt`-click a folder's arrow | Open or close it with every folder inside closed |
 | `⌘,` | Settings |
 | `⌘+` `⌘−` `⌘0` | Interface bigger, smaller, 100% |
 

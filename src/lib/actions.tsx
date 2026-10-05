@@ -18,7 +18,7 @@ import { api, errorMessage } from "./api";
 import { computeProcessing } from "./processing";
 import { fileFor } from "./renders";
 import { editFor, useProject } from "../store/project";
-import { revealLabel } from "./platform";
+import { modKey, revealLabel } from "./platform";
 import { keyName } from "./keys";
 import { useRename } from "../components/Rename";
 import { COLLECTION_COLORS } from "./theme";
@@ -195,7 +195,7 @@ export function pickedMenu(): MenuItem[] {
   return [
     { label: "Key", icon: <KeyRound size={14} />, submenu: keySubmenu(ids) },
     { label: "Tempo", icon: <Gauge size={14} />, submenu: tempoSubmenu(ids) },
-    { label: `Rename ${count(ids.length, "file")}…`, icon: <PenLine size={14} />, onSelect: () => void renameTargets() },
+    { label: `Rename ${count(ids.length, "file")}…`, icon: <PenLine size={14} />, hint: `${modKey}R`, onSelect: () => void renameTargets() },
     "separator",
     { label: "Add to favorites", icon: <Star size={14} />, onSelect: () => void favoriteAll(ids) },
     { label: "Add to collection", icon: <FolderPlus size={14} />, submenu: collectionSubmenu(ids) },
@@ -399,7 +399,7 @@ export function sampleMenu(row: SampleRow, index: number): MenuItem[] {
     "separator",
     { label: "Key", icon: <KeyRound size={14} />, submenu: keySubmenu([row.id], [row]) },
     { label: "Tempo", icon: <Gauge size={14} />, submenu: tempoSubmenu([row.id], [row]) },
-    { label: "Rename…", icon: <PenLine size={14} />, onSelect: () => useRename.getState().open([row]) },
+    { label: "Rename…", icon: <PenLine size={14} />, hint: `${modKey}R`, onSelect: () => useRename.getState().open([row]) },
     ...(view.type === "collection"
       ? [
           {
@@ -411,7 +411,7 @@ export function sampleMenu(row: SampleRow, index: number): MenuItem[] {
         ]
       : []),
     "separator",
-    { label: revealLabel(), icon: <FolderSearch size={14} />, onSelect: () => void reveal(row.path) },
+    { label: revealLabel(), icon: <FolderSearch size={14} />, hint: `${modKey}⇧R`, onSelect: () => void reveal(row.path) },
     { label: "Copy path", icon: <Copy size={14} />, onSelect: () => void copyText(row.path) },
   ];
 }

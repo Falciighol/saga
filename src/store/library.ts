@@ -5,6 +5,12 @@ import { toast } from "./toasts";
 
 export const dirKey = (sourceId: number, dir: string) => `${sourceId}:${dir}`;
 
+/** True when `key` is a folder somewhere below `dir`. A source's own key ("3:") is a prefix of its folders' keys, so it's ruled out by name. */
+export function isBelow(key: string, sourceId: number, dir: string): boolean {
+  const own = dirKey(sourceId, dir);
+  return key !== own && key.startsWith(dir ? `${own}/` : own);
+}
+
 interface LibraryState {
   loaded: boolean;
   sources: SourceInfo[];
@@ -19,6 +25,8 @@ interface LibraryState {
   refreshCollections: () => Promise<void>;
   setProgress: (p: IndexProgress) => void;
   toggleExpanded: (sourceId: number, dir: string) => void;
+  /** Closes every folder inside `dir`, leaving `dir` itself as it is. With no source, closes every folder in the tree. */
+  collapseAll: (sourceId?: number, dir?: string) => void;
   loadDirs: (sourceId: number, dir: string) => Promise<void>;
   addFolders: (paths: string[], exclude?: Record<string, string[]>) => Promise<number>;
   /** Leaves a subfolder out of the library (its samples go), or lets it back in. */
@@ -74,6 +82,11 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     const open = !get().expanded[key];
     set((s) => ({ expanded: { ...s.expanded, [key]: open } }));
     if (open) void get().loadDirs(sourceId, dir);
+  },
+
+  collapseAll: (sourceId, dir = "") => {
+    if (sourceId == null) return set({ expanded: {} });
+    set((s) => ({ expanded: Object.fromEntries(Object.entries(s.expanded).filter(([k]) => !isBelow(k, sourceId, dir))) }));
   },
 
   loadDirs: async (sourceId, dir) => {
