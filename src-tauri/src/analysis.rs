@@ -10,6 +10,10 @@ pub const PEAK_BUCKETS: usize = 512;
 /// Bumped when analysis learns something new, so already-indexed files get analyzed again.
 /// 2: sound descriptors, and tempo and key from the audio.
 pub const VERSION: i64 = 2;
+/// Bumped when decoding learns to open files it could not before, so files that failed get one
+/// more try. Failed files store this in `analysis_version` instead of `VERSION`.
+/// 3: Symphonia 0.6, which reads AAC in CAF (most Apple Loops).
+pub const DECODE_VERSION: i64 = 3;
 /// Files longer than this are summarized from their first 20 minutes only.
 const MAX_ANALYZE_SECONDS: f64 = 20.0 * 60.0;
 
