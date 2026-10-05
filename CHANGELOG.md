@@ -16,6 +16,8 @@ Write for producers, not developers: say what changed for them, not which file c
 
 # Changelog
 
+## Unreleased
+
 ## 1.0.4 - 2026-10-05
 
 Apple Loops play and get analyzed, the sample you're playing is analyzed first, and the list shows the columns you choose.

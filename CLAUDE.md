@@ -29,6 +29,10 @@ unless asked.
    and light themes, and in the mini player if the component shows there.
 4. Docs match: README (features, shortcuts, search syntax), the Settings shortcut list, and the
    docs/DEVELOPMENT.md layout if you added a module or store.
+5. A change users will notice has an entry under `## Unreleased` in CHANGELOG.md (add the heading
+   under `# Changelog` if it isn't there). The format is in the file's header comment. Skip
+   refactors, docs, tooling and fixes nobody could have run into. The app shows these notes after
+   an update, so write them for producers.
 
 ## Product rules (these are promises to users, not style)
 

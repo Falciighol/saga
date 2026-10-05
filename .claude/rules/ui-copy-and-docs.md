@@ -7,6 +7,7 @@ paths:
   - "docs/**"
   - "gumroad/**"
   - ".github/RELEASE_TEMPLATE.md"
+  - "CHANGELOG.md"
 ---
 
 # Words in the app and in the docs

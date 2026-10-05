@@ -136,7 +136,7 @@ What changed in each version is written once, in [`CHANGELOG.md`](../CHANGELOG.m
 app bundles the file: after an update it shows a small "You're on Saga x.y.z" card, and Settings ›
 Updates › What's new lists every version. The same notes go into the GitHub release.
 
-To ship a version:
+To ship a version (in Claude Code, `/release` walks through these steps and the notes):
 
 ```bash
 npm run set-version -- 0.2.0
