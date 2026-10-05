@@ -587,15 +587,16 @@ impl Db {
         self.read.lock().query_row("SELECT 1 FROM samples WHERE id = ?", [id], |_| Ok(())).optional().ok().flatten().is_some()
     }
 
-    /// New or changed files, then files analyzed by an older version, oldest first.
+    /// New or changed files, then files analyzed by an older version, then files that failed
+    /// before the decoder last learned to open more files, oldest first.
     pub fn pending(&self, source_id: Option<i64>) -> DbResult<Vec<PendingFile>> {
         let conn = self.read.lock();
         let mut stmt = conn.prepare(
             "SELECT s.id, s.path, s.dir, s.name, s.ext, src.name, s.status FROM samples s JOIN sources src ON src.id = s.source_id \
-             WHERE (s.status = 0 OR (s.status = 1 AND s.analysis_version < ?2)) AND src.online = 1 \
-             AND (?1 IS NULL OR s.source_id = ?1) ORDER BY s.status, s.id",
+             WHERE (s.status = 0 OR (s.status = 1 AND s.analysis_version < ?2) OR (s.status = 2 AND s.analysis_version < ?3)) \
+             AND src.online = 1 AND (?1 IS NULL OR s.source_id = ?1) ORDER BY s.status, s.id",
         )?;
-        let rows = stmt.query_map(params![source_id, analysis::VERSION], |r| {
+        let rows = stmt.query_map(params![source_id, analysis::VERSION, analysis::DECODE_VERSION], |r| {
             Ok(PendingFile {
                 id: r.get(0)?,
                 path: r.get(1)?,
@@ -613,9 +614,9 @@ impl Db {
     pub fn description_counts(&self) -> DbResult<(i64, i64)> {
         self.read.lock().query_row(
             "SELECT COALESCE(SUM(s.status = 1 AND s.features IS NOT NULL), 0), \
-             COALESCE(SUM(s.status = 0 OR (s.status = 1 AND s.analysis_version < ?1)), 0) \
+             COALESCE(SUM(s.status = 0 OR (s.status = 1 AND s.analysis_version < ?1) OR (s.status = 2 AND s.analysis_version < ?2)), 0) \
              FROM samples s JOIN sources src ON src.id = s.source_id WHERE src.online = 1",
-            [analysis::VERSION],
+            [analysis::VERSION, analysis::DECODE_VERSION],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
     }
@@ -701,7 +702,7 @@ impl Db {
                         }
                     }
                     Err(_) => {
-                        failed.execute([analysis::VERSION, o.id])?;
+                        failed.execute([analysis::DECODE_VERSION, o.id])?;
                     }
                 }
             }
@@ -1444,6 +1445,24 @@ mod tests {
         assert_eq!((r.key.as_deref(), r.key_source, r.bpm, r.bpm_source, r.status), (Some("Am"), Some("name"), Some(124.0), Some("name"), 0));
         // Nothing was set by hand any more, so there's nothing to put back.
         assert!(!db.set_user_values(&[bass.id], None, Some(&KeyChange::Detected)).unwrap());
+    }
+
+    #[test]
+    fn failed_files_get_one_more_try_after_a_decoder_upgrade() {
+        let (_d, db, _) = open();
+        let kick = by_name(&db, "DT2_Kick_Dusty_03");
+        let pending = |db: &Db| db.pending(None).unwrap().iter().any(|p| p.id == kick.id);
+        assert!(pending(&db));
+
+        // Failing now is final until the decoder learns something new.
+        db.apply_analysis(&[AnalysisOutcome { id: kick.id, result: Err("unsupported codec".into()) }]).unwrap();
+        assert_eq!(by_name(&db, "DT2_Kick_Dusty_03").status, 2);
+        assert!(!pending(&db));
+
+        // A file that failed with an older decoder is tried again.
+        db.write.lock().execute("UPDATE samples SET analysis_version = ? WHERE id = ?", params![analysis::DECODE_VERSION - 1, kick.id]).unwrap();
+        assert!(pending(&db));
+        assert_eq!(db.description_counts().unwrap().1, 5);
     }
 
     #[test]
