@@ -3,7 +3,7 @@ import { Download, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { addToCollection, useDragState } from "../lib/actions";
 import { api } from "../lib/api";
-import { pixelRatio } from "../lib/scale";
+import { dropPoint } from "../lib/scale";
 import { useSimilar } from "../store/similar";
 import { useBrowse } from "../store/browse";
 import { useToasts } from "../store/toasts";
@@ -114,8 +114,7 @@ export function DropTarget() {
       const p = event.payload;
       if (p.type === "enter" || p.type === "over") {
         setOver(true);
-        const scale = pixelRatio();
-        const [x, y] = [p.position.x / scale, p.position.y / scale];
+        const [x, y] = dropPoint(p.position);
         const panel = useDragState.getState().internal ? null : similarPanelAt(x, y);
         if (panel) highlightEl(panel);
         else highlight(collectionAt(x, y));
@@ -125,8 +124,7 @@ export function DropTarget() {
       } else if (p.type === "drop") {
         setOver(false);
         highlight(null);
-        const scale = pixelRatio();
-        const [x, y] = [p.position.x / scale, p.position.y / scale];
+        const [x, y] = dropPoint(p.position);
         const sound = p.paths.find((path) => AUDIO.test(path));
         if (!useDragState.getState().internal && sound && similarPanelAt(x, y)) {
           useSimilar.getState().fromFile(sound);
@@ -134,7 +132,8 @@ export function DropTarget() {
         }
         const target = collectionAt(x, y);
         if (target != null) {
-          const ids = await api.idsForPaths(p.paths);
+          const drag = useDragState.getState();
+          const ids = drag.internal && drag.ids.length ? drag.ids : await api.idsForPaths(p.paths);
           if (ids.length) await addToCollection(target, ids);
           return;
         }

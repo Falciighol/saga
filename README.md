@@ -39,18 +39,27 @@ and choose **Exclude from library**, or pick folders to leave out from Settings;
 come back from the library folder's right-click menu or Settings. To leave out a kind of folder
 everywhere, like the `Vocals` folder inside every pack, add its name under **Leave out folders
 named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem Mixes`).
+To tidy the folder list, `⌥`/`Alt`-click a folder's arrow to fold it with everything inside, right-click a
+folder › **Collapse subfolders**, or use the button next to **Folders** to close them all.
 
 - **Instant search** over names, folders, categories and tags, plus [field syntax](#search-syntax)
   like `bpm:120-128 key:Am+ is:loop`.
 - **Filters** for one-shot or loop, category, tempo (with half and double time), key with Camelot
-  compatibility, length, channels, format, sample rate and tags. Histograms show how your library
-  is spread before you pick a range.
+  compatibility, length, channels, format, sample rate, tags and the date a file was created
+  (today, the last 7 or 30 days, this year, or any range of days). Histograms show how your
+  library is spread before you pick a range.
+- **Columns your way.** Right-click the list's header (or use the button at its end) to show or
+  hide columns: date created, date added, format, sample rate, bit depth, channels, loudness and
+  times played join the usual ones. Drag a column's title to move it (or focus it and press
+  ⌥/Alt ← →), and click it to sort; dates sort newest first. Names always keep their room: when
+  the columns don't fit, the list scrolls sideways.
 - **Organize** with favorites, collections (right-click a sample, or drop samples on a
-  collection) and your own tags.
+  collection; `⌫` takes them out again) and your own tags.
 - **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
   tempo, rename them, favorite or collect them, or drag them all into your DAW at once.
-- **Audition** by selecting: loops repeat, click the waveform to seek, and choose the output
-  device in Settings. Playback has click-free fades.
+- **Audition** by selecting: loops repeat, click the waveform to seek (or drag it into your DAW),
+  and choose the output device in Settings. Playback has click-free fades. Turn on **Play next** to hear the list
+  through: when a sample ends, the next one plays, and loops play once.
 
 ![The filter panel: tempo and length histograms with range sliders, a Camelot key wheel, audio format options and tags](docs/screenshots/filters.webp)
 
@@ -76,11 +85,20 @@ turn on **Tempos with two decimals** in Settings.
 ### Rename files with their key and tempo
 
 Select samples and choose **Rename…** to write what Saga knows into the file names. Build the new
-name from tokens (the current name, key, BPM, date created, category) and any text, or pick a
-preset like `{name}_{bpm}_{key}`. Choose how keys are written (`F#m`, `F#min`, `F# minor` or
-Camelot `11A`), optionally as their relative major (`F#m` becomes `A`), and whether tempos are
-rounded. Values a name already has are left out, so `Loop_124_Am` doesn't become
-`Loop_124_Am_124_Am`. A preview shows every new name and any clash before anything changes.
+name from tokens (the current name, folder, collection, number, key, BPM, date created, category)
+and any text, or pick a preset like `{name}_{bpm}_{key}`. Click a token again to take it out, or **Clear** to start over.
+Choose how keys are written (`F#m`, `F#min`, `F# Min`, `F# minor` or Camelot `11A`), optionally as
+their relative major (`F#m` becomes `A`), whether tempos are rounded, and whether they're followed
+by `BPM`. **Save as preset…** keeps a pattern with all its choices under your own name, so
+`File Name_C Maj_120 BPM_2026-01-01` is one click away next time. Values a name already has are
+left out, so `Loop_124_Am` doesn't become `Loop_124_Am_124_Am`. A preview shows every new name and
+any clash before anything changes.
+
+To tidy a folder of mismatched names, open it, select everything and use **Folder name and number**
+(`{folder} {n}`): `Hip Hop Drums 1`, `Hip Hop Drums 2` and so on, in the order the list shows. From a
+collection, `{collection} {n}` does the same with the collection's name. Numbers can start anywhere,
+be padded (`01`, `001`) and count across the whole selection or start again in each folder. Files
+can trade names, so numbering a folder again just works.
 
 Files are renamed where they are, along with Ableton's `.asd` analysis file next to them, and keep
 their favorites, tags and collections. **Undo** puts the old names back. DAW projects that already
@@ -95,6 +113,8 @@ wheel.
   tape. Saga picks half or double time when that's closer, or you choose.
 - **Key matching** shifts tonal samples to the project key by the smallest interval, with manual
   semitones and cents on top and formant preservation for vocals.
+- **How each key fits** shows next to it in the list and the mini player: `Am in key`,
+  `C relative`, `Dm fits`, or `Gm +2 st`, how far key matching would move it.
 - **Scale lock** makes `[ ]` step a sample through the project key's scale instead of by
   semitones.
 - **The key as MIDI**: drag the tile in the key popup into your DAW for a clip that runs up the
@@ -108,7 +128,7 @@ metronome click locked to the project tempo.
 
 ![The editor: a zoomable stereo waveform with a bar ruler, and cards for tempo, pitch and key, loop region, shape and output](docs/screenshots/editor.webp)
 
-Drag any row, the preview or the editor's output into your DAW or Finder. A processed sample is
+Drag any row, the preview's waveform or the editor's output into your DAW or Finder. A processed sample is
 rendered first, and the render matches what you heard because preview and render share the same
 code. Renders you drag out are kept in `Music/Saga/Renders` (or a folder you choose in Settings),
 so DAW projects that use them keep working; Settings shows how much space they take and can move
@@ -190,8 +210,14 @@ On Windows, use Ctrl where these say ⌘.
 | `Space` / `Enter` | Play or pause / play from the start |
 | `←` | Back to the start |
 | `F` / `L` | Favorite / toggle looping |
-| `⌘K` / `⌘⇧F` | Search / filters |
-| `Esc` | Clear search, stop, or close the editor |
+| `⌫` | Remove from the open collection |
+| `⌘K` (or `⌘F`, `/`) | Search |
+| `⌘⇧F` | Filters |
+| `Esc` | Clear the selection or search, close the editor, or stop |
+| `⌘A` | Select all results (`⌘`-click or `⇧`-click to select several) |
+| `⌘R` | Rename the selected samples |
+| `⌘⇧R` | Reveal in Finder (Show in folder on Windows) |
+| `⌥`/`Alt`-click a folder's arrow | Open or close it with every folder inside closed |
 | `⌘,` | Settings |
 | `⌘+` `⌘−` `⌘0` | Interface bigger, smaller, 100% |
 
@@ -205,9 +231,9 @@ On Windows, use Ctrl where these say ⌘.
 
 | Views | |
 | --- | --- |
-| `M` | Sound map or list |
+| `M` | Sound map or list (on the map, `↑ ↓` walk the similar sounds) |
 | `G` | Find similar |
-| `H` | The Lab (inside it, `↑ ↓ ← →` pick scales, roots, bars and chords, and `Space` plays) |
+| `H` | The Lab (inside it, `↑ ↓ ← →` pick scales, roots, bars and chords, `Space` plays, `⌫` clears a bar and `Esc` stops) |
 
 ## Building from source
 

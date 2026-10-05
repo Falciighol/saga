@@ -68,6 +68,11 @@ export interface SampleRow {
   favorite: boolean;
   online: boolean;
   playCount: number;
+  /** When the file was created, in seconds since 1970 (its last change where the drive doesn't
+   *  keep a created time); null until a scan has read it. */
+  created: number | null;
+  /** When Saga first indexed it, in seconds since 1970. */
+  added: number;
 }
 
 /** A tempo set by hand, or back to what Saga found. Mirrors `TempoChange` in model.rs. */
@@ -120,6 +125,10 @@ export interface Filters {
   sampleRates?: number[];
   tags?: string[];
   excludeTags?: string[];
+  /** Files created at or after this time, in seconds since 1970. */
+  createdFrom?: number | null;
+  /** Files created before this time (the end of the range, not included). */
+  createdTo?: number | null;
   favorites?: boolean;
   collectionId?: number | null;
   sourceId?: number | null;
@@ -128,7 +137,7 @@ export interface Filters {
 }
 
 /** "fit": how well each sample's notes fit the key filter's scale, best first (see `scaleFit`). */
-export type SortKey = "relevance" | "name" | "added" | "played" | "duration" | "bpm" | "key" | "fit" | "random";
+export type SortKey = "relevance" | "name" | "added" | "created" | "played" | "duration" | "bpm" | "key" | "fit" | "random";
 
 export interface QueryRequest {
   filters: Filters;

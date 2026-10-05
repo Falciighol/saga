@@ -8,7 +8,8 @@ import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX
 import { EMPTY_FILTERS, useBrowse, type AdvancedFilters } from "../store/browse";
 import { KeyWheel } from "./KeyWheel";
 import { Histogram, linearScale, logScale, RangeSlider } from "./RangeSlider";
-import { cx, SectionLabel, Segmented, Switch } from "./ui";
+import { CreatedFilter } from "./CreatedFilter";
+import { Chip, cx, SectionLabel, Segmented, Switch } from "./ui";
 
 const BPM_MAX = BPM_HIST_MIN + BPM_HIST_BINS * BPM_HIST_STEP;
 const bpmScale = linearScale(BPM_HIST_MIN, BPM_MAX);
@@ -68,23 +69,6 @@ export function searchSyntax(kind: string, categories: string[], f: AdvancedFilt
   for (const t of f.tags) parts.push(`tag:${t}`);
   for (const t of f.excludeTags) parts.push(`-tag:${t}`);
   return parts.join("  ");
-}
-
-function Chip({ on, onClick, children, mono }: { on: boolean; onClick: () => void; children: React.ReactNode; mono?: boolean }) {
-  return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
-      className={cx(
-        "h-[26px] rounded-md transition-colors",
-        mono ? "px-[7px] font-mono text-[11.5px]" : "px-2.5 text-small",
-        on ? "bg-raised2 text-text" : "text-text2 hover:bg-raised hover:text-text",
-      )}
-    >
-      {children}
-    </button>
-  );
 }
 
 function toggleIn<T>(list: T[], v: T): T[] {
@@ -333,12 +317,16 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </section>
+
+          <CreatedFilter />
         </div>
       </div>
 
       <footer className="flex h-[50px] items-center gap-3 border-t border-line bg-bg pr-3 pl-6">
         <SectionLabel className="shrink-0">As a search</SectionLabel>
-        <code className="min-w-0 flex-1 truncate font-mono text-ui text-text">{syntax || <span className="text-text3">No filters yet</span>}</code>
+        <code className="min-w-0 flex-1 truncate font-mono text-ui text-text">
+          {syntax || <span className="text-text3">{f.createdFrom != null || f.createdTo != null ? "Date created can't be typed as a search yet" : "No filters yet"}</span>}
+        </code>
         <span className="font-mono text-small text-text3 tabular">{total != null ? `${total.toLocaleString("en-US")} match` : ""}</span>
         {syntax && (
           <button type="button" onClick={() => void copyText(syntax, "Search")} className="flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-small text-text2 hover:bg-raised">

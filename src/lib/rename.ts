@@ -1,10 +1,11 @@
-import { hasTempo, fmtBpm } from "./format";
-import { camelot, keyName, keyRoot } from "./keys";
+import { tokenById, type BatchInfo, type TokenContext } from "./renameTokens";
 import type { SampleRow } from "./types";
 
-/** How a key is written into a name. */
-export type KeyStyle = "short" | "compact" | "long" | "camelot";
+/** How a key is written into a name: F#m, F#min, F# Min, F# minor or 11A. */
+export type KeyStyle = "short" | "compact" | "abbrev" | "long" | "camelot";
 export type DateStyle = "ymd" | "compact" | "dmy" | "mdy";
+/** Whether {n} counts across everything being renamed, or starts again in each folder. */
+export type NumberEach = "selection" | "folder";
 
 /** A batch rename: a template of text and tokens, and how each token is written. */
 export interface RenamePattern {
@@ -15,141 +16,89 @@ export interface RenamePattern {
   relativeMajor: boolean;
   /** Whole beats (124) or as stored, up to two decimals (123.45). */
   bpmWhole: boolean;
+  /** Write "BPM" after the tempo ("124 BPM"), so it's left out along with a missing tempo. */
+  bpmSuffix: boolean;
   dateStyle: DateStyle;
   /** Leave out a tempo or key the name already has, so "Loop_124_Am" doesn't become "Loop_124_Am_124_Am". */
   skipExisting: boolean;
+  /** The first number {n} gives. */
+  numberFrom: number;
+  /** How many digits {n} is padded to with zeros: 1 gives "7", 2 gives "07". */
+  numberDigits: number;
+  numberEach: NumberEach;
 }
 
+/** Patterns saved before a field existed are read over this, so every field has a value. */
 export const DEFAULT_PATTERN: RenamePattern = {
   template: "{name}_{bpm}_{key}",
   keyStyle: "short",
   relativeMajor: false,
   bpmWhole: true,
+  bpmSuffix: false,
   dateStyle: "ymd",
   skipExisting: true,
+  numberFrom: 1,
+  numberDigits: 1,
+  numberEach: "selection",
 };
-
-export const TOKENS: { token: string; label: string; title: string }[] = [
-  { token: "{name}", label: "Name", title: "The file's name as it is now, without the extension" },
-  { token: "{key}", label: "Key", title: "The key shown in Saga, written in the style below" },
-  { token: "{bpm}", label: "BPM", title: "The tempo shown in Saga" },
-  { token: "{date}", label: "Date created", title: "The day the file was created" },
-  { token: "{category}", label: "Category", title: "Kick, Bass, Vocal…" },
-];
-
-export const PRESETS: { label: string; template: string }[] = [
-  { label: "Name, then tempo and key", template: "{name}_{bpm}_{key}" },
-  { label: "Tempo and key, then name", template: "{bpm}_{key}_{name}" },
-  { label: "Name (key, tempo BPM)", template: "{name} ({key}, {bpm} BPM)" },
-  { label: "Name with date created", template: "{name}_{date}" },
-  { label: "Key, tempo and date", template: "{name}_{key}_{bpm}_{date}" },
-];
 
 /** Characters macOS or Windows won't take in a file name. */
 const BAD_CHARS = /[/\\:*?"<>|\u0000-\u001f]/;
 const SEPARATORS = /^[\s_\-.,]+$/;
 
-export function keyForName(row: Pick<SampleRow, "keyPc" | "keyMode">, style: KeyStyle, relativeMajor: boolean): string {
-  if (row.keyPc == null || row.keyMode == null) return "";
-  let pc = row.keyPc;
-  let mode = row.keyMode;
-  // A one-shot's root note has no scale to write.
-  if (mode === 2) return style === "camelot" ? "" : ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][pc];
-  if (relativeMajor && mode === 1) {
-    pc = (pc + 3) % 12;
-    mode = 0;
-  }
-  const m = mode as 0 | 1;
-  switch (style) {
-    case "short":
-      return keyName(pc, m);
-    case "compact":
-      return `${keyRoot(pc, m)}${m === 1 ? "min" : "maj"}`;
-    case "long":
-      return `${keyRoot(pc, m)} ${m === 1 ? "minor" : "major"}`;
-    case "camelot":
-      return camelot(pc, m);
-  }
+/** Whether the template holds this token ("{n}", any case). */
+export function usesToken(template: string, id: string): boolean {
+  return template.toLowerCase().includes(`{${id.toLowerCase()}}`);
 }
 
-/** Every way a name might already state this key, lowercased. */
-function keySpellings(row: Pick<SampleRow, "keyPc" | "keyMode">): string[] {
-  const out: string[] = [];
-  for (const rel of [false, true]) {
-    for (const style of ["short", "compact", "long", "camelot"] as KeyStyle[]) out.push(keyForName(row, style, rel).toLowerCase());
+/** Takes every copy of a token out of the template, with the separator before it (or after it, at
+ *  the start), so "{name}_{bpm}_{key}" becomes "{name}_{key}". Typed words around it stay. */
+export function removeToken(template: string, id: string): string {
+  const re = new RegExp(`\\{${id}\\}`, "i");
+  let out = template;
+  for (let m = re.exec(out); m; m = re.exec(out)) {
+    let start = m.index;
+    let end = start + m[0].length;
+    const before = /[\s_\-.,]+$/.exec(out.slice(0, start));
+    const after = /^[\s_\-.,]+/.exec(out.slice(end));
+    if (before) start -= before[0].length;
+    else if (after) end += after[0].length;
+    out = out.slice(0, start) + out.slice(end);
   }
-  return [...new Set(out.filter(Boolean))];
+  return out;
 }
 
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-export function dateText(secs: number | null | undefined, style: DateStyle): string {
-  if (secs == null) return "";
-  const d = new Date(secs * 1000);
-  const [y, m, day] = [String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate())];
-  switch (style) {
-    case "ymd":
-      return `${y}-${m}-${day}`;
-    case "compact":
-      return `${y}${m}${day}`;
-    case "dmy":
-      return `${day}-${m}-${y}`;
-    case "mdy":
-      return `${m}-${day}-${y}`;
+/** Numbers the rows in the order given (the list's): across all of them, or again from the first
+ *  number in each folder. */
+export function numberRows(rows: SampleRow[], p: Pick<RenamePattern, "numberFrom" | "numberEach">): Map<number, number> {
+  const next = new Map<string, number>();
+  const out = new Map<number, number>();
+  for (const row of rows) {
+    const group = p.numberEach === "folder" ? `${row.sourceId}\u0000${row.dir}` : "";
+    const n = next.get(group) ?? p.numberFrom;
+    out.set(row.id, n);
+    next.set(group, n + 1);
   }
-}
-
-/** The words in a name, lowercased: "Loop_124_Am (dry)" → loop, 124, am, dry. */
-function nameWords(name: string): string[] {
-  return name.toLowerCase().split(/[\s_\-.,()[\]{}]+/).filter(Boolean);
-}
-
-/** The value each token stands for in this row's new name; empty when it has none. */
-function tokenValue(token: string, row: SampleRow, created: number | null | undefined, p: RenamePattern): string {
-  switch (token) {
-    case "name":
-      return row.name;
-    case "bpm": {
-      if (!hasTempo(row)) return "";
-      const text = p.bpmWhole ? String(Math.round(row.bpm!)) : fmtBpm(row.bpm);
-      if (p.skipExisting) {
-        const words = nameWords(row.name);
-        const said = [text, String(Math.round(row.bpm!)), fmtBpm(row.bpm)].some((t) => words.includes(t) || words.includes(`${t}bpm`));
-        if (said) return "";
-      }
-      return text;
-    }
-    case "key": {
-      const text = keyForName(row, p.keyStyle, p.relativeMajor);
-      if (text && p.skipExisting) {
-        const words = nameWords(row.name);
-        const lower = ` ${words.join(" ")} `;
-        if (keySpellings(row).some((k) => (k.includes(" ") ? lower.includes(` ${k} `) : words.includes(k)))) return "";
-      }
-      return text;
-    }
-    case "date":
-      return dateText(created, p.dateStyle);
-    case "category":
-      return row.category ?? "";
-    default:
-      return `{${token}}`;
-  }
+  return out;
 }
 
 /** Fills in the template. A token with nothing to say takes the separator next to it along, so a
- *  sample without a key gets "Loop_124", not "Loop_124_". */
-export function applyPattern(row: SampleRow, created: number | null | undefined, p: RenamePattern): string {
-  const parts: { text: string; token: boolean }[] = [];
+ *  sample without a key gets "Loop_124", not "Loop_124_". Words in braces that aren't tokens stay. */
+export function applyPattern(row: SampleRow, p: RenamePattern, ctx: TokenContext): string {
+  const parts: { text: string; token: boolean; bpm?: boolean }[] = [];
   let last = 0;
   for (const m of p.template.matchAll(/\{(\w+)\}/g)) {
     if (m.index! > last) parts.push({ text: p.template.slice(last, m.index), token: false });
-    parts.push({ text: tokenValue(m[1].toLowerCase(), row, created, p), token: true });
+    const token = tokenById(m[1]);
+    parts.push({ text: token ? token.value(row, p, ctx) : m[0], token: !!token, bpm: token?.id === "bpm" });
     last = m.index! + m[0].length;
   }
   if (last < p.template.length) parts.push({ text: p.template.slice(last), token: false });
+
+  // "124 BPM", unless the template already says BPM straight after the token ("{bpm} BPM").
+  for (let i = 0; i < parts.length; i++) {
+    if (p.bpmSuffix && parts[i].bpm && parts[i].text && !/^\s*bpm(?![a-z])/i.test(parts[i + 1]?.text ?? "")) parts[i].text += " BPM";
+  }
 
   for (let i = 0; i < parts.length; i++) {
     if (!parts[i].token || parts[i].text) continue;
@@ -168,7 +117,7 @@ export function applyPattern(row: SampleRow, created: number | null | undefined,
     .replace(/^[\s_\-.,]+|[\s_\-.,]+$/g, "");
 }
 
-/** Why a name can't be a file name, or null when it can. Mirrors `valid_name` in commands.rs. */
+/** Why a name can't be a file name, or null when it can. Mirrors `valid_name` in rename.rs. */
 export function nameProblem(name: string): string | null {
   if (!name.trim()) return "Empty name";
   if (BAD_CHARS.test(name)) return 'Names can\'t contain / \\ : * ? " < > |';
@@ -186,22 +135,21 @@ export interface PlannedRename {
   unchanged: boolean;
 }
 
-/** The new name of every row, with the ones that clash with each other marked. */
-export function planRenames(rows: SampleRow[], dates: Map<number, number | null>, p: RenamePattern): PlannedRename[] {
+/** The new name of every row (in the list's order, which {n} counts in), with the ones that clash
+ *  with each other marked. Files may trade names: the backend moves them all at once. */
+export function planRenames(rows: SampleRow[], p: RenamePattern, info: BatchInfo): PlannedRename[] {
+  const ctx: TokenContext = { ...info, numbers: usesToken(p.template, "n") ? numberRows(rows, p) : new Map() };
   const plans = rows.map<PlannedRename>((row) => {
-    const to = applyPattern(row, dates.get(row.id), p);
+    const to = applyPattern(row, p, ctx);
     const unchanged = to === row.name;
     return { row, to, unchanged, problem: unchanged ? null : !row.online ? "Drive not connected" : nameProblem(to) };
   });
   // Two files in one folder can't end up with the same name (whatever the case, on macOS and Windows).
+  const key = (x: PlannedRename) => `${x.row.sourceId}\u0000${x.row.dir}\u0000${x.to.toLowerCase()}.${x.row.ext}`;
   const taken = new Map<string, number>();
+  for (const x of plans) taken.set(key(x), (taken.get(key(x)) ?? 0) + 1);
   for (const x of plans) {
-    const k = `${x.row.sourceId}\u0000${x.row.dir}\u0000${x.to.toLowerCase()}.${x.row.ext}`;
-    taken.set(k, (taken.get(k) ?? 0) + 1);
-  }
-  for (const x of plans) {
-    const k = `${x.row.sourceId}\u0000${x.row.dir}\u0000${x.to.toLowerCase()}.${x.row.ext}`;
-    if (!x.problem && !x.unchanged && taken.get(k)! > 1) x.problem = "Same name as another file here";
+    if (!x.problem && !x.unchanged && taken.get(key(x))! > 1) x.problem = "Same name as another file here";
   }
   return plans;
 }

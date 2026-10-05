@@ -1,29 +1,22 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, Pause, Play, Star } from "lucide-react";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { Pause, Play, Star } from "lucide-react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dragSample, dragSamples, pickedMenu, sampleMenu } from "../lib/actions";
-import { bpmText, fmtLength, hasTempo, keyText, sourceHint } from "../lib/format";
 import { hasMod } from "../lib/platform";
-import { compatibleKeys } from "../lib/keys";
-import { fittingKeys, plainScale, scaleById, scaleNotes } from "../lib/theory";
-import type { SampleRow, SortKey } from "../lib/types";
+import { columnLayout, NAME_MIN, type ColumnDef } from "../lib/listColumns";
+import type { SampleRow } from "../lib/types";
 import { activeFilterCount, targetRows, useBrowse } from "../store/browse";
 import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
-import { useProject } from "../store/project";
 import { openContextMenu } from "./Menu";
 import { cx } from "./ui";
-import { MiniWave } from "./Waveforms";
+import { ColumnCell, ListHeader, useKeyFit, useVisibleColumns, type CellContext, type KeyFit } from "./ListColumns";
 
 const ROW_H = 44;
-const COLS = {
-  wave: 180,
-  category: 84,
-  bpm: 60,
-  key: 64,
-  length: 64,
-  tags: 150,
-};
+/** The sticky header's height (h-8) plus the gap under it, which is where the first row starts. */
+const LIST_TOP = 32 + 4;
+/** The sideways scrollbar's height (`::-webkit-scrollbar` in index.css). */
+const SCROLLBAR = 10;
 
 function GripIcon() {
   return (
@@ -38,22 +31,17 @@ function GripIcon() {
   );
 }
 
-/** Marks keys that fit the key filter, or the project key when there's no filter. */
-function useKeyMatcher() {
-  const filterKey = useBrowse((s) => s.filters.key);
-  const projectKey = useProject((s) => s.key);
-  return useMemo(() => {
-    const key = filterKey ?? (projectKey ? { pc: projectKey.pc, mode: projectKey.mode, compatible: true, scale: scaleById(projectKey.scale)?.steps } : null);
-    if (!key) return null;
-    const steps = key.scale?.length ? key.scale : null;
-    const set = !key.compatible ? [{ pc: key.pc, mode: key.mode }] : steps ? fittingKeys(key.pc, steps) : compatibleKeys(key.pc, key.mode);
-    const scale = scaleNotes(key.pc, steps ?? plainScale(key.mode).steps);
-    return (row: SampleRow) =>
-      row.keyPc != null && (row.keyMode === 2 ? scale.includes(row.keyPc) : set.some((k) => k.pc === row.keyPc && k.mode === row.keyMode));
-  }, [filterKey, projectKey]);
-}
-
-const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { row: SampleRow; index: number; keyMatch: boolean | null }) {
+const SampleRowView = memo(function SampleRowView({
+  row,
+  index,
+  keyFit,
+  columns,
+}: {
+  row: SampleRow;
+  index: number;
+  keyFit: KeyFit | null;
+  columns: ColumnDef[];
+}) {
   const selected = useBrowse((s) => s.selected?.id === row.id);
   const picked = useBrowse((s) => s.picked.has(row.id));
   const bpmFixed = usePrefs((s) => s.bpmFixed);
@@ -61,11 +49,13 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
   const playing = status === "playing" || status === "loading";
   const segments = row.dir.split("/").filter(Boolean);
   const where = segments.length > 1 ? `${segments[0]}  ›  ${segments[segments.length - 1]}` : row.pack;
+  // The waveform column says when a file can't be read. Without it, the name's second line says so instead.
+  const unreadable = row.status === 2 && !columns.some((c) => c.id === "waveform");
 
   const select = (play?: boolean) => useBrowse.getState().selectRow(row, index, play === undefined ? undefined : { play });
   // Acting on a row that's among the picked ones acts on all of them.
   const inPicked = () => useBrowse.getState().picked.has(row.id);
-  const tempo = bpmText(row, bpmFixed);
+  const ctx: CellContext = { selected, keyFit, bpmFixed };
 
   return (
     <div
@@ -122,51 +112,16 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
         onDoubleClick={(e) => !e.shiftKey && !hasMod(e) && usePlayer.getState().play(row)}
         className="flex h-11 min-w-0 flex-1 items-center gap-4 pl-1 text-left"
       >
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5" style={{ minWidth: NAME_MIN }}>
           <span className="truncate text-body font-medium text-text">
             {row.name}
             <span className="font-normal text-text3">.{row.ext}</span>
           </span>
-          <span className="truncate text-[11.5px] text-text3">{where}</span>
+          <span className="truncate text-[11.5px] text-text3">{unreadable ? `Can't read this file · ${where}` : where}</span>
         </span>
-        <span className="relative shrink-0" style={{ width: COLS.wave }}>
-          {row.status === 2 ? (
-            <span className="block text-center text-micro text-text3">Can't read this file</span>
-          ) : (
-            <MiniWave peaks={row.peaks} width={COLS.wave} height={28} sampleId={row.id} emphasized={selected} />
-          )}
-        </span>
-        <span className="shrink-0 truncate text-ui text-text2 @max-[900px]:hidden" style={{ width: COLS.category }}>
-          {row.category ?? <span className="text-text3">—</span>}
-        </span>
-        <span
-          className="shrink-0 text-right font-mono text-small text-text2 tabular"
-          style={{ width: COLS.bpm }}
-          title={hasTempo(row) ? sourceHint("Tempo", row.bpmSource) : undefined}
-        >
-          {tempo === "—" ? <span className="text-text3">—</span> : tempo}
-        </span>
-        <span
-          className="flex shrink-0 items-center gap-[7px] font-mono text-small text-text2"
-          style={{ width: COLS.key }}
-          title={[row.camelot, sourceHint("Key", row.keySource)].filter(Boolean).join(" · ") || undefined}
-        >
-          <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: row.key == null || keyMatch == null ? "transparent" : keyMatch ? "var(--accent)" : "var(--line2)" }}
-          />
-          {keyText(row) ?? <span className="text-text3">—</span>}
-        </span>
-        <span className="shrink-0 text-right font-mono text-small text-text2 tabular" style={{ width: COLS.length }}>
-          {row.status === 0 && row.duration == null ? <span className="animate-soft-pulse text-text3">…</span> : fmtLength(row.duration)}
-        </span>
-        <span className="flex shrink-0 gap-1 overflow-hidden @max-[1100px]:hidden" style={{ width: COLS.tags }}>
-          {row.tags.slice(0, 2).map((t) => (
-            <span key={t} className="flex h-5 items-center rounded bg-raised2 px-[7px] text-micro whitespace-nowrap text-text2">
-              {t}
-            </span>
-          ))}
-        </span>
+        {columns.map((c) => (
+          <ColumnCell key={c.id} column={c} row={row} ctx={ctx} />
+        ))}
       </button>
       <span
         aria-hidden="true"
@@ -178,49 +133,6 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
     </div>
   );
 });
-
-function SortHeader({ label, sortKey, width, align }: { label: string; sortKey: SortKey; width?: number; align?: "right" }) {
-  const sort = useBrowse((s) => s.sort);
-  const desc = useBrowse((s) => s.desc);
-  const setSort = useBrowse((s) => s.setSort);
-  const on = sort === sortKey;
-  return (
-    <button
-      type="button"
-      onClick={() => setSort(sortKey, on ? !desc : false)}
-      className={cx("flex shrink-0 items-center gap-1 uppercase hover:text-text2", on && "text-text2", align === "right" && "justify-end", !width && "flex-1")}
-      style={width ? { width } : undefined}
-    >
-      {label}
-      {on && (desc ? <ArrowDown size={11} /> : <ArrowUp size={11} />)}
-    </button>
-  );
-}
-
-export function ListHeader() {
-  return (
-    <div className="flex h-8 shrink-0 items-center gap-1 border-b border-line px-4 text-micro font-medium tracking-[0.05em] text-text3">
-      <span className="w-8 shrink-0" />
-      <span className="w-7 shrink-0" />
-      <div className="flex min-w-0 flex-1 gap-4 pl-1">
-        <SortHeader label="Name" sortKey="name" />
-        <span className="shrink-0 uppercase" style={{ width: COLS.wave }}>
-          Waveform
-        </span>
-        <span className="shrink-0 uppercase @max-[900px]:hidden" style={{ width: COLS.category }}>
-          Category
-        </span>
-        <SortHeader label="BPM" sortKey="bpm" width={COLS.bpm} align="right" />
-        <SortHeader label="Key" sortKey="key" width={COLS.key} />
-        <SortHeader label="Length" sortKey="duration" width={COLS.length} align="right" />
-        <span className="shrink-0 uppercase @max-[1100px]:hidden" style={{ width: COLS.tags }}>
-          Tags
-        </span>
-      </div>
-      <span className="w-7 shrink-0" />
-    </div>
-  );
-}
 
 function EmptyState() {
   const view = useBrowse((s) => s.view);
@@ -285,14 +197,35 @@ export function SampleList() {
   const selectedIndex = useBrowse((s) => s.selectedIndex);
   const ensureRange = useBrowse((s) => s.ensureRange);
   const rowAt = useBrowse((s) => s.rowAt);
-  const keyMatcher = useKeyMatcher();
+  const keyFitFor = useKeyFit();
   const parentRef = useRef<HTMLDivElement>(null);
+  const visible = useVisibleColumns();
+  const [width, setWidth] = useState(0);
+  const layout = useMemo(() => columnLayout(visible, width, keyFitFor != null), [visible, width, keyFitFor]);
+  const overflowing = width > 0 && layout.minWidth > width;
+
+  // The waveform gives way as the list narrows, so measure before the first paint to avoid a jump.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const measure = () => setWidth(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const virtualizer = useVirtualizer({
     count: total ?? 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 12,
+    // The header shares the scroll area: rows start under it, and a row scrolled into view stops below it.
+    scrollMargin: LIST_TOP,
+    scrollPaddingStart: LIST_TOP - 4,
+    // The virtualizer measures the list with its sideways scrollbar, so a row scrolled into view at the bottom
+    // would end up under it.
+    scrollPaddingEnd: overflowing ? SCROLLBAR : 0,
   });
   const items = virtualizer.getVirtualItems();
   const first = items[0]?.index ?? 0;
@@ -311,17 +244,19 @@ export function SampleList() {
   }, [selectedIndex, virtualizer]);
 
   return (
-    <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto py-1" aria-label="Samples">
+    // The scrollbar's room is kept even when the rows fit, so the measured width doesn't change as results load.
+    <div ref={parentRef} className="min-h-0 flex-1 overflow-auto pb-1 [scrollbar-gutter:stable]" aria-label="Samples">
+      <ListHeader columns={layout.columns} minWidth={layout.minWidth} overflowing={overflowing} />
       {total === 0 ? (
         <EmptyState />
       ) : (
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div className="relative mt-1" style={{ height: virtualizer.getTotalSize(), minWidth: layout.minWidth }}>
           {items.map((vi) => {
             const row = rowAt(vi.index);
             return (
-              <div key={vi.key} className="absolute top-0 left-0 w-full" style={{ height: ROW_H, transform: `translateY(${vi.start}px)` }}>
+              <div key={vi.key} className="absolute top-0 left-0 w-full" style={{ height: ROW_H, transform: `translateY(${vi.start - LIST_TOP}px)` }}>
                 {row ? (
-                  <SampleRowView row={row} index={vi.index} keyMatch={keyMatcher ? keyMatcher(row) : null} />
+                  <SampleRowView row={row} index={vi.index} keyFit={keyFitFor ? keyFitFor(row) : null} columns={layout.columns} />
                 ) : (
                   <div className="flex h-11 items-center gap-4 px-[88px]">
                     <span className="h-2.5 w-56 rounded bg-raised" />

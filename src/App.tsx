@@ -10,7 +10,7 @@ import { DropTarget, Toasts, UpdateNotice } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { ConfirmHost, PromptHost } from "./components/Prompt";
 import { RenameHost } from "./components/Rename";
-import { ListHeader, SampleList } from "./components/SampleList";
+import { SampleList } from "./components/SampleList";
 import { SelectionBar } from "./components/SelectionBar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -20,7 +20,7 @@ import { TypeBar } from "./components/TypeBar";
 import { Welcome } from "./components/Welcome";
 import { useHotkeys } from "./hooks/useHotkeys";
 import { useThemeSync } from "./hooks/useTheme";
-import { initDragIcon } from "./lib/actions";
+import { initDragIcon, playNextAfter } from "./lib/actions";
 import { api, events } from "./lib/api";
 import { isTextInput } from "./lib/platform";
 import { startBrowsing, useBrowse } from "./store/browse";
@@ -60,7 +60,10 @@ export default function App() {
         useBrowse.getState().refresh();
         useSimilar.getState().refreshIfWaiting();
       }),
-      events.onPlayback((e) => usePlayer.getState().handleEvent(e)),
+      events.onPlayback((e) => {
+        usePlayer.getState().handleEvent(e);
+        if (e.state === "ended") void playNextAfter(e.id);
+      }),
       events.onRecordLevel((e) => useSimilar.getState().onLevel(e)),
       events.onTransport(onTransport),
     ];
@@ -83,10 +86,11 @@ export default function App() {
       {/* First, so dialogs opened from Settings (confirmations, adding folders) stack above it. */}
       {settings && <SettingsDialog onClose={() => setSettings(false)} />}
       <MenuHost />
-      <PromptHost />
-      <ConfirmHost />
       <RenameHost />
       <AddFoldersHost />
+      {/* After the dialogs, so a name asked for inside one (Save as preset…) shows above it. */}
+      <PromptHost />
+      <ConfirmHost />
       <Toasts />
       <UpdateNotice />
       <DropTarget />
@@ -124,7 +128,6 @@ export default function App() {
                 <>
                   <TypeBar />
                   <FilterBar />
-                  <ListHeader />
                   <div className="relative flex min-h-0 flex-1 flex-col">
                     <SampleList />
                     <SelectionBar />

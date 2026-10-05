@@ -2,9 +2,9 @@
 // release (opened only by .github/workflows/release.yml), next to the Mac build from `npm run release:mac`.
 //   npm run release:windows
 //
-// One NSIS installer, not code-signed (Windows shows SmartScreen's "unknown publisher" warning), plus
-// the updater's signature for it. Both are uploaded to the draft, and its latest.json gets a
-// windows-x86_64 entry. If the draft already has a latest.json (the Mac's), that one is the starting
+// One NSIS installer, not code-signed (Windows shows SmartScreen's "unknown publisher" warning), and
+// the updater's signature for it. The installer is uploaded to the draft; the signature isn't, its
+// text goes into the draft's latest.json as the windows-x86_64 entry. If the draft already has a latest.json (the Mac's), that one is the starting
 // point so its entries survive, in whichever order the two builds are made. This script never creates
 // a release. The files are also kept in release-windows/; if gh fails, the script says what is still
 // missing on the draft so you can finish by hand.

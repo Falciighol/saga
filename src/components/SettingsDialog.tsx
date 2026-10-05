@@ -2,12 +2,12 @@ import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderMinus, FolderOpen, FolderPen, FolderPlus, HardDrive, Heart, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { openLink, reveal } from "../lib/actions";
+import { openLink, reveal, setPlayNext } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { MONO_FONTS, MONO_ORDER, SANS_FONTS, SANS_ORDER } from "../lib/fonts";
 import { fmtBytes, fmtCount } from "../lib/format";
 import { forgetRenders } from "../lib/renders";
-import { modKey, revealLabel } from "../lib/platform";
+import { altKey, modKey, revealLabel } from "../lib/platform";
 import { SCALES } from "../lib/scale";
 import { ACCENT_ORDER, ACCENTS, type ThemePref } from "../lib/theme";
 import type { FileCount, RendersUsage, SavedSounds, SourceInfo } from "../lib/types";
@@ -163,7 +163,7 @@ function SupportSection() {
 }
 
 /** What Reset puts back: everything Settings changes, and nothing in the library. */
-const RESETTABLE: (keyof PrefValues)[] = ["theme", "accent", "sansFont", "sansInstalled", "monoFont", "monoInstalled", "uiScale", "bpmFixed", "autoplay", "loopLoops", "loopShots", "miniOnTop", "autoUpdate"];
+const RESETTABLE: (keyof PrefValues)[] = ["theme", "accent", "sansFont", "sansInstalled", "monoFont", "monoInstalled", "uiScale", "bpmFixed", "autoplay", "playNext", "loopLoops", "loopShots", "miniOnTop", "autoUpdate"];
 
 function resetSettings() {
   useConfirm.getState().ask({
@@ -368,30 +368,63 @@ function SavedSoundsSection() {
   );
 }
 
-const SHORTCUTS: [string, string][] = [
-  ["↑ ↓", "Browse samples"],
-  ["Space", "Play or pause"],
-  ["Enter", "Play from the start"],
-  ["←", "Back to the start"],
-  ["F", "Favorite"],
-  ["L", "Toggle looping"],
-  [`${modKey} K`, "Search"],
-  [`${modKey} ⇧ F`, "Open filters"],
-  ["Esc", "Clear search or stop"],
-  [`${modKey} A`, "Select all results"],
-  [`${modKey} / ⇧ click`, "Select several samples"],
-  [`${modKey} ,`, "Settings"],
-  [`${modKey} + −`, "Interface bigger / smaller"],
-  [`${modKey} 0`, "Interface at 100%"],
-  ["E", "Open the editor"],
-  ["R", "Reverse"],
-  ["[ ]", "Semitone down / up (through the key's scale with scale lock)"],
-  ["S", "Sync to project tempo"],
-  ["K", "Match project key"],
-  ["T", "Tap tempo"],
-  ["M", "Sound map or list"],
-  ["G", "Find similar sounds"],
-  ["H", "The Lab"],
+/** Grouped like the README's tables; keep both in step with src/hooks/useHotkeys.ts. Several keys are alternatives. */
+const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
+  {
+    group: "Browsing",
+    keys: [
+      [["↑ ↓"], "Browse samples (⇧ for 10)"],
+      [["Space"], "Play or pause"],
+      [["Enter"], "Play from the start"],
+      [["←"], "Back to the start"],
+      [["F"], "Favorite"],
+      [["L"], "Toggle looping"],
+      [["⌫"], "Remove from the open collection"],
+      [[`${modKey} K`, "/"], "Search"],
+      [[`${modKey} ⇧ F`], "Open filters"],
+      [["Esc"], "Clear the selection or search, close the editor, or stop"],
+      [[`${modKey} A`], "Select all results"],
+      [[`${modKey} R`], "Rename the selected samples"],
+      [[`${modKey} ⇧ R`], revealLabel()],
+      [[`${modKey} / ⇧ click`], "Select several samples"],
+      [[`${altKey} click`], "On a folder's arrow: close every folder inside too"],
+      [[`${modKey} ,`], "Settings"],
+      [[`${modKey} + −`], "Interface bigger / smaller"],
+      [[`${modKey} 0`], "Interface at 100%"],
+    ],
+  },
+  {
+    group: "Processing",
+    keys: [
+      [["E"], "Open the editor"],
+      [["R"], "Reverse"],
+      [["[ ]"], "Semitone down / up (through the key's scale with scale lock)"],
+      [["S"], "Sync to project tempo"],
+      [["K"], "Match project key"],
+      [["T"], "Tap tempo"],
+    ],
+  },
+  {
+    group: "Views",
+    keys: [
+      [["M"], "Sound map or list"],
+      [["↑ ↓"], "On the map: walk the similar sounds"],
+      [["G"], "Find similar sounds"],
+      [["H"], "The Lab"],
+    ],
+  },
+  {
+    group: "In the Lab",
+    keys: [
+      [["↑ ↓"], "Scales: next or previous scale"],
+      [["← →"], "Scales: change the root"],
+      [["← →"], "Progressions: pick a bar"],
+      [["↑ ↓"], "Progressions: change its chord"],
+      [["⌫"], "Progressions: clear the bar"],
+      [["Space"], "Play the scale or progression"],
+      [["Esc"], "Stop the Lab's sound"],
+    ],
+  },
 ];
 
 export function SettingsDialog({ onClose }: { onClose: () => void }) {
@@ -505,6 +538,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <Row label="Play on select" hint="Preview a sample as soon as you select it.">
                 <Switch checked={prefs.autoplay} onChange={(v) => prefs.set({ autoplay: v })} />
               </Row>
+              <Row label="Play next" hint="When a sample ends, the next one in the list plays. Loops play once while this is on.">
+                <Switch checked={prefs.playNext} onChange={setPlayNext} />
+              </Row>
               <Row label="Loop loops" hint="Loops repeat until you stop them.">
                 <Switch checked={prefs.loopLoops} onChange={(v) => prefs.set({ loopLoops: v })} />
               </Row>
@@ -607,11 +643,22 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
 
             <section>
               <SectionLabel className="pb-2">Keyboard</SectionLabel>
-              <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                {SHORTCUTS.map(([k, what]) => (
-                  <div key={what} className="flex items-center justify-between gap-3 text-ui">
-                    <span className="text-text2">{what}</span>
-                    <Kbd>{k}</Kbd>
+              <div className="flex flex-col gap-4">
+                {SHORTCUTS.map(({ group, keys }) => (
+                  <div key={group}>
+                    <div className="pb-1.5 text-small font-medium text-text3">{group}</div>
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                      {keys.map(([alternatives, what]) => (
+                        <div key={what} className="flex items-center justify-between gap-3 text-ui">
+                          <span className="text-text2">{what}</span>
+                          <span className="flex shrink-0 gap-1">
+                            {alternatives.map((k) => (
+                              <Kbd key={k}>{k}</Kbd>
+                            ))}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

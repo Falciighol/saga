@@ -1,5 +1,6 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { create } from "zustand";
+import { isMac } from "./platform";
 
 /** Interface sizes offered in Settings and stepped through with ⌘+ / ⌘−. */
 export const SCALES = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -16,6 +17,16 @@ const usePixelRatioStore = create<{ ratio: number }>(() => ({ ratio: window.devi
 export const usePixelRatio = () => usePixelRatioStore((s) => s.ratio);
 
 export const pixelRatio = () => usePixelRatioStore.getState().ratio;
+
+/**
+ * Turns a drag-and-drop position from the webview into page coordinates. Tauri calls it physical
+ * on every OS, but on macOS it's really in points (AppKit's view coordinates), so only the zoom
+ * applies there. Dividing by the Retina ratio as well put every drop at half its real position.
+ */
+export function dropPoint(position: { x: number; y: number }): [number, number] {
+  const scale = isMac ? pixelRatio() / (window.devicePixelRatio || 1) : pixelRatio();
+  return [position.x / scale, position.y / scale];
+}
 
 /**
  * Works out screen pixels per interface pixel at the given zoom. WebKit leaves devicePixelRatio

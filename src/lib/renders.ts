@@ -42,12 +42,14 @@ export type RenderState =
   | { kind: "error"; message: string };
 
 /** Keeps a render of `row` ready while its settings are stable, so dragging it is instant. */
-export function useRender(row: SampleRow | null): { state: RenderState; processing: Processing | null } {
+export function useRender(row: SampleRow | null): { state: RenderState; processing: Processing | null; retry: () => void } {
   const project = useProject();
   const edit = useEdit(row?.id);
   const processing = row ? computeProcessing(row, project, edit) : null;
   const key = row && processing?.processed ? renderKey(row, processing) : null;
   const [state, setState] = useState<RenderState>({ kind: "rendering" });
+  // Bumped to try a failed render again; fileFor has already forgotten the failure.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!row || !processing) return;
@@ -67,7 +69,7 @@ export function useRender(row: SampleRow | null): { state: RenderState; processi
       window.clearTimeout(t);
     };
     // `key` captures everything that changes the render.
-  }, [key, row?.id, row?.path]);
+  }, [key, row?.id, row?.path, attempt]);
 
-  return { state, processing };
+  return { state, processing, retry: () => setAttempt((n) => n + 1) };
 }

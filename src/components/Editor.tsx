@@ -2,6 +2,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, Download, Minus, Pause, Play, Plus, Repeat, RotateCcw, Square, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
+import { askProjectKey, toggleLoop } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate } from "../lib/format";
 import { DEFAULT_EDIT, type Processing } from "../lib/processing";
@@ -11,8 +12,7 @@ import type { SampleRow } from "../lib/types";
 import { setupCanvas } from "../lib/waveform";
 import { useBrowse } from "../store/browse";
 import { useEditor, type Snap } from "../store/editor";
-import { playerPosition, shouldLoop, usePlayer } from "../store/player";
-import { usePrefs } from "../store/prefs";
+import { playerPosition, useLoopOn, usePlayer } from "../store/player";
 import { useEdit, useEdits, useProject } from "../store/project";
 import { toast } from "../store/toasts";
 import { Clock, DragTile, MetronomeIcon, PitchStepper, useElementWidth } from "./PreviewPanel";
@@ -267,7 +267,7 @@ function Stage({ row, processing }: { row: SampleRow; processing: Processing }) 
     // xOf depends on view/width, both listed.
   }, [width, duration, beat, view.start, view.end, span]);
 
-  const looping = usePrefs((p) => (row.kind === "loop" ? p.loopLoops : p.loopShots));
+  const looping = useLoopOn(row);
   const braceLeft = Math.max(0, xOf(rs));
   const braceRight = Math.min(width, xOf(re));
 
@@ -431,7 +431,7 @@ function KeyCard({ row, processing }: { row: SampleRow; processing: Processing }
       {row.keySource === "audio" && <p className="m-0 -mt-1 text-small leading-snug text-text3">Key detected from the audio — worth checking by ear.</p>}
       <Switch
         checked={project.matchKey && project.key != null}
-        onChange={(v) => (project.key ? project.set({ matchKey: v }) : toast("Set a project key in the title bar first", "info"))}
+        onChange={(v) => (project.key ? project.set({ matchKey: v }) : askProjectKey())}
         label="Match project key"
       />
       <PitchStepper row={row} processing={processing} />
@@ -573,7 +573,7 @@ function ShapeCard({ row }: { row: SampleRow }) {
 }
 
 function OutputCard({ row }: { row: SampleRow }) {
-  const { state, processing } = useRender(row);
+  const { state, processing, retry } = useRender(row);
   const [busy, setBusy] = useState(false);
   const exportFile = async () => {
     if (!processing) return;
@@ -604,7 +604,7 @@ function OutputCard({ row }: { row: SampleRow }) {
   };
   return (
     <Card title="Output">
-      <DragTile row={row} state={state} processing={processing} tall />
+      <DragTile row={row} state={state} processing={processing} onRetry={retry} tall />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" disabled={busy || !processing?.processed} onClick={variation} className="h-[30px] rounded-md border border-line2 text-small text-text2 hover:bg-raised disabled:opacity-40" title="Render into the Variations folder of your saved sounds (see Settings) and add it to your library">
           Save variation
@@ -644,11 +644,10 @@ function Position({ row, processing }: { row: SampleRow; processing: Processing 
 function Transport({ row, processing }: { row: SampleRow; processing: Processing }) {
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const project = useProject();
-  const prefs = usePrefs();
   const view = useEditor((s) => s.view);
   const setView = useEditor((s) => s.setView);
   const duration = row.duration ?? 0;
-  const loopOn = shouldLoop(row);
+  const loopOn = useLoopOn(row);
   const playing = status === "playing" || status === "loading";
   const zoom = (factor: number) => {
     const cur = view ?? { start: 0, end: duration };
@@ -671,11 +670,7 @@ function Transport({ row, processing }: { row: SampleRow; processing: Processing
         label="Loop (L)"
         active={loopOn}
         aria-pressed={loopOn}
-        onClick={() => {
-          const next = !loopOn;
-          prefs.set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-          if (usePlayer.getState().id === row.id) usePlayer.getState().setLooping(next);
-        }}
+        onClick={() => toggleLoop(row)}
       >
         <Repeat size={16} strokeWidth={1.75} />
       </IconButton>

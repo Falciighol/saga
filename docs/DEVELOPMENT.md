@@ -21,7 +21,11 @@ npm run tauri:build
 
 Working on the UI without the Rust side: `npm run dev` and open http://localhost:1420 in a
 browser. A mock backend with fake samples (`src/dev/mockBackend.ts`) kicks in automatically
-outside Tauri. The screenshots in the README are taken from it.
+outside Tauri. The screenshots in the README are taken from it. Commands that return data need a
+case there too.
+
+`npm run typecheck` checks the frontend (`npm run build` runs it first as well). There's no
+frontend test runner, linter or formatter yet.
 
 On macOS, `npm run tauri` puts `scripts/macos/actool` first on the PATH. Tauri's bundler runs
 `actool` with stdin closed, which breaks compiling the Icon Composer icon
@@ -31,8 +35,12 @@ needs Xcode 26.
 ## Tests
 
 ```bash
-cd src-tauri && cargo test
+cd src-tauri && cargo test --lib
 ```
+
+This runs on macOS and Windows. On Windows it depends on `src-tauri/build.rs` embedding the
+Common Controls manifest into the test binary, and on the IPC tests sending the page's own origin
+(`w.url()`). The comments there explain why.
 
 Covers key and name parsing, keys that fit a scale, how well a pitch profile fits one, embedded
 metadata, analysis, resampling and mixing, search and filters, indexing a real folder end to
@@ -80,20 +88,36 @@ src-tauri/src
   dsp.rs       shared processing: region, reverse, fades, gain, stretch, repitch, WAV writing
   render.rs    offline renders, file naming, scratch renders and clearing, zoomable waveform detail
   fonts.rs     installed font discovery for the font settings
+  model.rs     types exchanged with the frontend (mirrored in src/lib/types.ts)
+  rename.rs    renaming sample files on request, in two passes so files can trade names
   commands.rs  Tauri commands
+  lib.rs       app state, startup, command registration, IPC tests
 src
-  store/       Zustand stores: browse (queries, paging, selection), library, player, prefs,
-               project (tempo/key/scale), edits (per-sample), editor, ui (list/map/lab, mini
-               player), similar, soundmap, lab, updates
+  store/       Zustand stores: browse (queries, paging, selection, picked samples), library,
+               player, prefs, project (tempo/key/scale, and per-sample edits), editor, ui
+               (list/map/lab, mini player), similar, soundmap, lab, updates, toasts
+  hooks/       useHotkeys (every app-wide keyboard shortcut), useTheme (theme, fonts, size)
   components/lab/  the Lab: scale list, pitch circle, keyboard, chords, progressions, key finder,
                tempo & tuning, side panels
-  components/  UI
-  lib/         API bindings, processing (tempo/key math, one source of truth for preview and
-               render), theory (scales, spelling, chords, key finding, scale fit, scale steps),
-               progressions (presets, voicing, rhythms, suggestions), renders, theme palette,
-               fonts, waveform drawing, formatting
+  components/  UI; shared buttons, switches, chips and labels are in ui.tsx, menus in Menu.tsx; the
+               list's columns (cells, header, the Columns menu) in ListColumns.tsx
+  lib/         API bindings (api.ts) and types, actions (what menus, buttons and keys share:
+               dragging out, setting key/tempo, collections, Find similar), processing
+               (tempo/key math, one source of truth for preview and render), theory (scales,
+               spelling, chords, key finding, scale fit, scale steps), progressions (presets,
+               voicing, rhythms, suggestions), keys and keyMidi (key names, Camelot, the key's
+               MIDI clip), rename, renameTokens and renamePresets (the batch rename
+               pattern, its tokens and presets), listColumns (the list's columns, their
+               order and which show), renders, soundmap, theme palette,
+               fonts, interface size (scale), platform (⌘ or Ctrl), autoTitle (tooltips for
+               cut-off text), waveform drawing, formatting
   dev/         the mock backend for working on the UI in a browser
 ```
+
+[`CLAUDE.md`](../CLAUDE.md) and [`.claude/rules/`](../.claude/rules) hold the conventions,
+including [a map of how these parts connect](../.claude/rules/wiring.md) (commands, events,
+stores, persisted settings, code mirrored between Rust and TypeScript) and [where each keyboard
+shortcut is handled and documented](../.claude/rules/keyboard-shortcuts.md).
 
 ## Releasing
 
@@ -108,29 +132,32 @@ To ship a version:
 
 ```bash
 npm run set-version -- 0.2.0
-git commit -am "Saga 0.2.0" && git tag v0.2.0 && git push --follow-tags
+git push origin main v0.2.0
 npm run release:mac       # on the Mac
 npm run release:windows   # on the Windows PC
 ```
 
 1. `npm run set-version` writes the version to `package.json`, `tauri.conf.json`, `Cargo.toml`
-   and `Cargo.lock`.
+   and `Cargo.lock`, commits them (`chore: bump version to 0.2.0 …`) and tags `v0.2.0`. Pass
+   `--no-git` to only edit the files. `node scripts/version.mjs --check` says whether the four
+   agree. The workflow runs it and refuses a tag that doesn't match.
 2. The pushed tag starts `.github/workflows/release.yml` (it can also be run from the Actions
    tab). It is the only thing that creates the release: a **draft** whose notes come from
    `.github/RELEASE_TEMPLATE.md` (install steps plus a "What's new" skeleton). Nothing is built in
    CI. Edit the draft's "What's new" before publishing.
 3. `npm run release:mac` builds the Mac version on your Mac: one universal app for Apple Silicon
    and Intel, signed with your Developer ID and notarized by Apple (notarizing in CI would use up
-   the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the update bundle
-   (`Saga_universal.app.tar.gz`, which the updater downloads) to the draft, and adds the Mac entries to `latest.json`. It never creates
-   a release: if the workflow hasn't opened the draft yet, it stops and tells you to wait for it.
+   the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the
+   update bundle (`Saga_universal.app.tar.gz`, which the updater downloads) to the draft, and adds
+   the Mac entries to `latest.json`. It never creates a release: if the workflow hasn't opened the
+   draft yet, it stops and tells you to wait for it.
 4. `npm run release:windows` builds the NSIS installer on the PC (not code-signed, so Windows
    shows an "unknown publisher" warning), uploads the `-setup.exe` to the draft (the `.sig` isn't
-   uploaded; its text goes into `latest.json`), and adds the `windows-x86_64` entry to `latest.json`.
-
-5. Check the draft has the .dmg, `Saga_universal.app.tar.gz`, the Windows setup .exe and a `latest.json` listing
-   `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish it. That's the moment
-   installed copies see the update.
+   uploaded; its text goes into `latest.json`), and adds the `windows-x86_64` entry to
+   `latest.json`.
+5. Check the draft has the .dmg, `Saga_universal.app.tar.gz`, the Windows setup .exe and a
+   `latest.json` listing `darwin-aarch64`, `darwin-x86_64` and `windows-x86_64`, then publish it.
+   That's the moment installed copies see the update.
 
 Both scripts merge into the draft's existing `latest.json`, so the order doesn't matter and they
 can run on different days: whichever goes second keeps the first one's entries. Neither creates a

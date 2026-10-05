@@ -8,7 +8,9 @@ import { SimilarIcon } from "../components/ViewToggle";
 import { targetIds, targetRows, useBrowse } from "../store/browse";
 import { useLab } from "../store/lab";
 import { useLibrary } from "../store/library";
-import { usePlayer } from "../store/player";
+import { useEditor } from "../store/editor";
+import { shouldLoop, usePlayer } from "../store/player";
+import { usePrefs } from "../store/prefs";
 import { useSimilar } from "../store/similar";
 import { useUi } from "../store/ui";
 import { toast } from "../store/toasts";
@@ -16,7 +18,7 @@ import { api, errorMessage } from "./api";
 import { computeProcessing } from "./processing";
 import { fileFor } from "./renders";
 import { editFor, useProject } from "../store/project";
-import { revealLabel } from "./platform";
+import { modKey, revealLabel } from "./platform";
 import { keyName } from "./keys";
 import { useRename } from "../components/Rename";
 import { COLLECTION_COLORS } from "./theme";
@@ -34,14 +36,18 @@ export async function initDragIcon() {
   }
 }
 
-/** True while one of our own samples is being dragged, so drops back onto the window aren't mistaken for new folders. */
-export const useDragState = create<{ internal: boolean }>(() => ({ internal: false }));
+/**
+ * True while one of our own files is being dragged, so drops back onto the window aren't mistaken
+ * for new folders. `ids` are the samples behind it: a render's path isn't in the library, so a drop
+ * on a collection adds these instead of looking the paths up.
+ */
+export const useDragState = create<{ internal: boolean; ids: number[] }>(() => ({ internal: false, ids: [] }));
 
-export function dragOut(paths: string[]) {
+export function dragOut(paths: string[], ids: number[] = []) {
   if (!dragIconPath || paths.length === 0) return;
-  useDragState.setState({ internal: true });
-  startDrag({ item: paths, icon: dragIconPath }, () => useDragState.setState({ internal: false })).catch((e) => {
-    useDragState.setState({ internal: false });
+  useDragState.setState({ internal: true, ids });
+  startDrag({ item: paths, icon: dragIconPath }, () => useDragState.setState({ internal: false, ids: [] })).catch((e) => {
+    useDragState.setState({ internal: false, ids: [] });
     toast(`Couldn't start the drag: ${errorMessage(e)}`);
   });
 }
@@ -50,12 +56,12 @@ export function dragOut(paths: string[]) {
 export function dragSample(row: SampleRow) {
   const p = computeProcessing(row, useProject.getState(), editFor(row.id));
   if (!p.processed) {
-    dragOut([row.path]);
+    dragOut([row.path], [row.id]);
     return;
   }
   // Renders are cached, so this is usually instant; a fresh one takes a moment while the mouse is held.
   fileFor(row, p, true)
-    .then((path) => dragOut([path]))
+    .then((path) => dragOut([path], [row.id]))
     .catch((e) => toast(`Couldn't render: ${errorMessage(e)}`));
 }
 
@@ -72,7 +78,7 @@ export function dragSamples(rows: SampleRow[]) {
     return p.processed ? fileFor(row, p, true) : Promise.resolve(row.path);
   });
   Promise.all(files)
-    .then(dragOut)
+    .then((paths) => dragOut(paths, online.map((r) => r.id)))
     .catch((e) => toast(`Couldn't render: ${errorMessage(e)}`));
 }
 
@@ -139,8 +145,9 @@ export function tempoSubmenu(ids: number[], rows: SampleRow[] = []): MenuItem[] 
   if (one?.bpm) {
     const bpm = one.bpm;
     items.push(
-      { label: `Half (${Math.round(bpm * 50) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm / 2 } }) },
-      { label: `Double (${Math.round(bpm * 200) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm * 2 } }) },
+      // "Set to", because unlike the preview's "Play at half time" these change the tempo Saga keeps for the sample.
+      { label: `Set to half (${Math.round(bpm * 50) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm / 2 } }) },
+      { label: `Set to double (${Math.round(bpm * 200) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm * 2 } }) },
     );
   }
   items.push(
@@ -151,11 +158,19 @@ export function tempoSubmenu(ids: number[], rows: SampleRow[] = []): MenuItem[] 
   return items;
 }
 
+/** Opens the project key picker in the title bar, for controls that need a project key and don't have one yet. */
+export function askProjectKey() {
+  window.dispatchEvent(new Event(OPEN_PROJECT_KEY));
+}
+
+/** The window event `askProjectKey` sends; the title bar's KeyControl opens on it. */
+export const OPEN_PROJECT_KEY = "saga:open-project-key";
+
 /** Opens the rename dialog for the picked samples, or the selected one. */
 export async function renameTargets() {
   try {
     const rows = await targetRows();
-    if (rows.length) useRename.getState().open(rows);
+    if (rows.length) await useRename.getState().open(rows);
   } catch (e) {
     toast(errorMessage(e));
   }
@@ -180,7 +195,7 @@ export function pickedMenu(): MenuItem[] {
   return [
     { label: "Key", icon: <KeyRound size={14} />, submenu: keySubmenu(ids) },
     { label: "Tempo", icon: <Gauge size={14} />, submenu: tempoSubmenu(ids) },
-    { label: `Rename ${count(ids.length, "file")}…`, icon: <PenLine size={14} />, onSelect: () => void renameTargets() },
+    { label: `Rename ${count(ids.length, "file")}…`, icon: <PenLine size={14} />, hint: `${modKey}R`, onSelect: () => void renameTargets() },
     "separator",
     { label: "Add to favorites", icon: <Star size={14} />, onSelect: () => void favoriteAll(ids) },
     { label: "Add to collection", icon: <FolderPlus size={14} />, submenu: collectionSubmenu(ids) },
@@ -189,11 +204,8 @@ export function pickedMenu(): MenuItem[] {
           {
             label: "Remove from this collection",
             icon: <ListMinus size={14} />,
-            onSelect: async () => {
-              await api.removeFromCollection(view.id, ids);
-              await useLibrary.getState().refreshCollections();
-              useBrowse.getState().refresh();
-            },
+            hint: "⌫",
+            onSelect: () => void removeFromCollection(view.id, ids),
           } as MenuItem,
         ]
       : []),
@@ -203,6 +215,52 @@ export function pickedMenu(): MenuItem[] {
 }
 
 // ---- common sample actions ----
+
+/** Turns looping on or off for this kind of sample (loops or one-shots). Turning it on stops Play next,
+ *  which would otherwise keep the sample from repeating. */
+export function toggleLoop(row: SampleRow) {
+  const next = !shouldLoop(row);
+  usePrefs.getState().set({ ...(row.kind === "loop" ? { loopLoops: next } : { loopShots: next }), ...(next ? { playNext: false } : {}) });
+  const player = usePlayer.getState();
+  if (player.id === row.id) player.setLooping(next);
+}
+
+/** Turns Play next on or off. A loop that's repeating now plays to its end and moves on. */
+export function setPlayNext(on: boolean) {
+  usePrefs.getState().set({ playNext: on });
+  const player = usePlayer.getState();
+  if (player.row && player.status !== "idle") player.setLooping(shouldLoop(player.row));
+}
+
+/** Rows to look past for one whose drive is connected before giving up. */
+const NEXT_LOOKAHEAD = 200;
+
+/** With Play next on, plays the sample after the one that just ended: the next row of the list, or of
+ *  Similar sounds on the map. Does nothing when you've since selected another sample or opened the editor. */
+export async function playNextAfter(id: number | null) {
+  if (!usePrefs.getState().playNext || id == null || usePlayer.getState().id !== id || useEditor.getState().openId != null) return;
+  const ui = useUi.getState();
+  if (ui.view === "map" && !ui.mini) {
+    const similar = useSimilar.getState();
+    if (similar.items[similar.index]?.row.id !== id) return;
+    const next = similar.items.findIndex((x, i) => i > similar.index && x.row.online);
+    if (next >= 0) similar.select(next, { play: true });
+    return;
+  }
+  const browse = useBrowse.getState();
+  if (browse.selected?.id !== id || browse.total == null) return;
+  const from = browse.selectedIndex;
+  for (let i = from + 1; i < Math.min(browse.total, from + 1 + NEXT_LOOKAHEAD); i++) {
+    const row = await browse.loadRow(i);
+    // Something else was played or selected while the next page loaded.
+    if (useBrowse.getState().selected?.id !== id || usePlayer.getState().id !== id) return;
+    if (!row) return;
+    if (row.online) {
+      useBrowse.getState().selectRow(row, i, { play: true });
+      return;
+    }
+  }
+}
 
 /** Opens a Lab tool on this sample: the key finder, or the tuner for a one-shot. */
 export function openInLab(row: SampleRow, index: number, tool: "finder" | "tempo") {
@@ -251,6 +309,31 @@ export async function addToCollection(collectionId: number, ids: number[]) {
     await useLibrary.getState().refreshCollections();
     const name = useLibrary.getState().collections.find((c) => c.id === collectionId)?.name;
     toast(`Added to ${name ?? "collection"}`, "info");
+  } catch (e) {
+    toast(errorMessage(e));
+  }
+}
+
+/** Takes samples out of a collection (the files and the rest of the library aren't touched), with Undo. */
+export async function removeFromCollection(collectionId: number, ids: number[]) {
+  if (!ids.length) return;
+  const refresh = async () => {
+    await useLibrary.getState().refreshCollections();
+    useBrowse.getState().refresh();
+  };
+  try {
+    await api.removeFromCollection(collectionId, ids);
+    if (ids.length > 1) useBrowse.getState().clearPicked();
+    await refresh();
+    const name = useLibrary.getState().collections.find((c) => c.id === collectionId)?.name;
+    toast(`Removed ${count(ids.length, "sample")} from ${name ?? "the collection"}`, "info", {
+      label: "Undo",
+      run: () =>
+        void api
+          .addToCollection(collectionId, ids)
+          .then(refresh)
+          .catch((e) => toast(errorMessage(e))),
+    });
   } catch (e) {
     toast(errorMessage(e));
   }
@@ -316,22 +399,19 @@ export function sampleMenu(row: SampleRow, index: number): MenuItem[] {
     "separator",
     { label: "Key", icon: <KeyRound size={14} />, submenu: keySubmenu([row.id], [row]) },
     { label: "Tempo", icon: <Gauge size={14} />, submenu: tempoSubmenu([row.id], [row]) },
-    { label: "Rename…", icon: <PenLine size={14} />, onSelect: () => useRename.getState().open([row]) },
+    { label: "Rename…", icon: <PenLine size={14} />, hint: `${modKey}R`, onSelect: () => useRename.getState().open([row]) },
     ...(view.type === "collection"
       ? [
           {
             label: "Remove from this collection",
             icon: <ListMinus size={14} />,
-            onSelect: async () => {
-              await api.removeFromCollection(view.id, [row.id]);
-              await useLibrary.getState().refreshCollections();
-              useBrowse.getState().refresh();
-            },
+            hint: "⌫",
+            onSelect: () => void removeFromCollection(view.id, [row.id]),
           } as MenuItem,
         ]
       : []),
     "separator",
-    { label: revealLabel(), icon: <FolderSearch size={14} />, onSelect: () => void reveal(row.path) },
+    { label: revealLabel(), icon: <FolderSearch size={14} />, hint: `${modKey}⇧R`, onSelect: () => void reveal(row.path) },
     { label: "Copy path", icon: <Copy size={14} />, onSelect: () => void copyText(row.path) },
   ];
 }

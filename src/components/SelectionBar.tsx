@@ -32,7 +32,7 @@ export function SelectionBar() {
         <button type="button" onClick={menu(() => tempoSubmenu(ids()))} className={BUTTON}>
           Tempo <ChevronDown size={13} />
         </button>
-        <button type="button" onClick={() => void renameTargets()} className={BUTTON}>
+        <button type="button" title={`Rename (${modKey}R)`} onClick={() => void renameTargets()} className={BUTTON}>
           <PenLine size={14} /> Rename…
         </button>
         <Divider />

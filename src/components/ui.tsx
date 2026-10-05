@@ -113,6 +113,24 @@ export function IconButton({
   );
 }
 
+/** A toggle in a row of quick choices, like the filter panel's presets. */
+export function Chip({ on, onClick, children, mono }: { on: boolean; onClick: () => void; children: ReactNode; mono?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={cx(
+        "h-[26px] rounded-md transition-colors",
+        mono ? "px-[7px] font-mono text-[11.5px]" : "px-2.5 text-small",
+        on ? "bg-raised2 text-text" : "text-text2 hover:bg-raised hover:text-text",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div className={cx("text-micro font-semibold tracking-[0.06em] text-text3 uppercase", className)}>{children}</div>

@@ -1,13 +1,13 @@
 import { useEffect, type RefObject } from "react";
 import { hasMod, isTextInput } from "../lib/platform";
 import { useMenu } from "../components/Menu";
-import { useBrowse } from "../store/browse";
+import { targetIds, useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
-import { shouldLoop, usePlayer } from "../store/player";
+import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { editFor, stepPitch, useEdits, useProject } from "../store/project";
 import { useTapTempo } from "../components/ProjectControls";
-import { findSimilar } from "../lib/actions";
+import { findSimilar, removeFromCollection, renameTargets, reveal, toggleLoop } from "../lib/actions";
 import { stepScale } from "../lib/scale";
 import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
 import { scaleChords } from "../lib/theory";
@@ -16,11 +16,32 @@ import { useSimilar } from "../store/similar";
 import { useSoundMap } from "../store/soundmap";
 import { useUi } from "../store/ui";
 
+/**
+ * The element the keyboard last moved focus to. A control you clicked keeps focus too, but never counts, even after
+ * later key presses (unlike :focus-visible in Chromium), so Space after clicking Reverse still plays the sample.
+ */
+let keyboardFocus: EventTarget | null = null;
+let pointerDown = false;
+const onPointerDown = () => {
+  pointerDown = true;
+};
+const onFocusIn = (e: FocusEvent) => {
+  keyboardFocus = pointerDown ? null : e.target;
+  pointerDown = false;
+};
+
+/** A button, switch or menu item you tabbed to: Enter and Space press it, as everywhere else, instead of playing. */
+function keyboardFocusedControl(target: EventTarget | null): boolean {
+  if (target !== keyboardFocus || !(target instanceof Element)) return false;
+  return target.matches('button, a[href], summary, [role="button"], [role="switch"], [role="checkbox"], [role="menuitem"], [role="tab"]');
+}
+
 /** Keyboard-first browsing. Arrow keys keep working while the search box has focus. */
 export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSettings: () => void) {
   const tap = useTapTempo((bpm) => useProject.getState().set({ bpm }));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      pointerDown = false;
       // Interface size works everywhere, Settings included.
       if (hasMod(e) && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
         e.preventDefault();
@@ -32,6 +53,7 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       // Menus and dialogs (filters, settings, prompts) handle their own keys, Escape included.
       if (useMenu.getState().menu || document.querySelector('[role="dialog"]')) return;
       if (e.target instanceof HTMLInputElement && e.target.type === "range" && e.key.startsWith("Arrow")) return;
+      if ((e.key === "Enter" || e.key === " ") && !hasMod(e) && keyboardFocusedControl(e.target)) return;
       const browse = useBrowse.getState();
       const player = usePlayer.getState();
       const typing = isTextInput(e.target);
@@ -51,8 +73,9 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       }
       if (hasMod(e) && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
-        // The filters live above the list.
-        if (onMap) ui.setView("list");
+        // The filters live above the list, so leave the mini player, map, Lab or editor for it.
+        if (ui.mini) ui.setMini(false);
+        if (ui.view !== "list" || editing) ui.setView("list");
         window.setTimeout(() => window.dispatchEvent(new Event("saga:open-filters")), 0);
         return;
       }
@@ -60,6 +83,18 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       if (hasMod(e) && !e.shiftKey && e.key.toLowerCase() === "a" && !typing && ui.view === "list" && !ui.mini && !editing) {
         e.preventDefault();
         void browse.pickAll();
+        return;
+      }
+      // Rename the picked samples (or the selected one), and with Shift show the selected file in Finder or Explorer.
+      // The web view would reload on Mod+R, so the key is always swallowed, even while typing in another field.
+      if (hasMod(e) && !e.altKey && e.key.toLowerCase() === "r") {
+        e.preventDefault();
+        if (typing && !inSearch) return;
+        if (e.shiftKey) {
+          if (row) void reveal(row.path);
+        } else {
+          void renameTargets();
+        }
         return;
       }
       if (hasMod(e) && e.key === ",") {
@@ -139,6 +174,12 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
 
+      // In a collection's list, ⌫ (Delete on a Mac keyboard) takes the selected or picked samples out of it.
+      if ((e.key === "Backspace" || e.key === "Delete") && browse.view.type === "collection" && (ui.view === "list" || ui.mini) && !editing) {
+        e.preventDefault();
+        void removeFromCollection(browse.view.id, targetIds(browse));
+        return;
+      }
       if (e.key === " ") {
         e.preventDefault();
         player.toggle(row);
@@ -168,16 +209,20 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       } else if (e.key === "t" || e.key === "T") {
         tap();
       } else if ((e.key === "l" || e.key === "L") && row) {
-        const next = !shouldLoop(row);
-        usePrefs.getState().set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-        if (player.id === row.id) player.setLooping(next);
+        toggleLoop(row);
       } else if (e.key === "/") {
         e.preventDefault();
         search.current?.focus();
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [search, openSettings, tap]);
 }
 
