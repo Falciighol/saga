@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { dragOut } from "../lib/actions";
+import { dragOut, OPEN_PROJECT_KEY } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { fmtBpm } from "../lib/format";
 import { keyClip } from "../lib/keyMidi";
@@ -136,6 +136,7 @@ export function KeyControl({ compact }: { compact?: boolean }) {
   return (
     <Popover
       align="right"
+      openOn={OPEN_PROJECT_KEY}
       trigger={({ open, toggle }) => (
         <button
           type="button"

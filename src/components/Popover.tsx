@@ -6,11 +6,17 @@ export function Popover({
   trigger,
   children,
   align = "left",
+  side = "below",
+  openOn,
   className,
 }: {
   trigger: (props: { open: boolean; toggle: () => void }) => ReactNode;
   children: (close: () => void) => ReactNode;
   align?: "left" | "right" | "center";
+  /** "above" is for triggers near the bottom of the window, such as the preview panel's. */
+  side?: "below" | "above";
+  /** A window event that opens it from elsewhere, such as Match asking for a project key. */
+  openOn?: string;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -42,6 +48,13 @@ export function Popover({
   }, [open]);
 
   useEffect(() => {
+    if (!openOn) return;
+    const onOpen = () => setOpen(true);
+    window.addEventListener(openOn, onOpen);
+    return () => window.removeEventListener(openOn, onOpen);
+  }, [openOn]);
+
+  useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
@@ -65,7 +78,8 @@ export function Popover({
           ref={panel}
           role="dialog"
           className={cx(
-            "animate-pop absolute top-full z-40 mt-1.5 rounded-xl border border-line2 bg-panel shadow-pop",
+            "animate-pop absolute z-40 rounded-xl border border-line2 bg-panel shadow-pop",
+            side === "below" ? "top-full mt-1.5" : "bottom-full mb-1.5",
             align === "left" && "left-0",
             align === "right" && "right-0",
             align === "center" && "left-1/2 -translate-x-1/2",

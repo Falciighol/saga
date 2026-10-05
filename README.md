@@ -54,8 +54,8 @@ named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem M
   collection; `⌫` takes them out again) and your own tags.
 - **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
   tempo, rename them, favorite or collect them, or drag them all into your DAW at once.
-- **Audition** by selecting: loops repeat, click the waveform to seek, and choose the output
-  device in Settings. Playback has click-free fades. Turn on **Play next** to hear the list
+- **Audition** by selecting: loops repeat, click the waveform to seek (or drag it into your DAW),
+  and choose the output device in Settings. Playback has click-free fades. Turn on **Play next** to hear the list
   through: when a sample ends, the next one plays, and loops play once.
 
 ![The filter panel: tempo and length histograms with range sliders, a Camelot key wheel, audio format options and tags](docs/screenshots/filters.webp)
@@ -123,7 +123,7 @@ metronome click locked to the project tempo.
 
 ![The editor: a zoomable stereo waveform with a bar ruler, and cards for tempo, pitch and key, loop region, shape and output](docs/screenshots/editor.webp)
 
-Drag any row, the preview or the editor's output into your DAW or Finder. A processed sample is
+Drag any row, the preview's waveform or the editor's output into your DAW or Finder. A processed sample is
 rendered first, and the render matches what you heard because preview and render share the same
 code. Renders you drag out are kept in `Music/Saga/Renders` (or a folder you choose in Settings),
 so DAW projects that use them keep working; Settings shows how much space they take and can move

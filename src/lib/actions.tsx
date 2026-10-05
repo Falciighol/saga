@@ -145,8 +145,9 @@ export function tempoSubmenu(ids: number[], rows: SampleRow[] = []): MenuItem[] 
   if (one?.bpm) {
     const bpm = one.bpm;
     items.push(
-      { label: `Half (${Math.round(bpm * 50) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm / 2 } }) },
-      { label: `Double (${Math.round(bpm * 200) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm * 2 } }) },
+      // "Set to", because unlike the preview's "Play at half time" these change the tempo Saga keeps for the sample.
+      { label: `Set to half (${Math.round(bpm * 50) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm / 2 } }) },
+      { label: `Set to double (${Math.round(bpm * 200) / 100})`, onSelect: () => void applyValues(ids, { tempo: { to: "bpm", bpm: bpm * 2 } }) },
     );
   }
   items.push(
@@ -156,6 +157,14 @@ export function tempoSubmenu(ids: number[], rows: SampleRow[] = []): MenuItem[] 
   );
   return items;
 }
+
+/** Opens the project key picker in the title bar, for controls that need a project key and don't have one yet. */
+export function askProjectKey() {
+  window.dispatchEvent(new Event(OPEN_PROJECT_KEY));
+}
+
+/** The window event `askProjectKey` sends; the title bar's KeyControl opens on it. */
+export const OPEN_PROJECT_KEY = "saga:open-project-key";
 
 /** Opens the rename dialog for the picked samples, or the selected one. */
 export async function renameTargets() {

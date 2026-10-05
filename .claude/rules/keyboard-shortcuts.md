@@ -19,7 +19,9 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
 1. `Mod + = / + / - / _ / 0` change the interface size. This works everywhere, even with dialogs
    open.
 2. **Gate:** return if a context menu is open (`useMenu`) or any `[role="dialog"]` is in the DOM.
-   Return if the key is an arrow on a range input.
+   Return if the key is an arrow on a range input, or Enter/Space on a button, switch or menu item
+   the keyboard moved focus to (`keyboardFocusedControl`), so tabbing to a control and pressing it
+   works. A control focused by a mouse click never counts, so Space after clicking still plays.
 3. Then `Mod+K`/`Mod+F`, `Mod+Shift+F`, `Mod+A`, `Mod+,`.
 4. **Lab block** (view is `lab`, not mini, no editor, not typing, no modifier): the keys depend on
    the Lab tool, and `progressionKey()` handles the Progressions tool.
@@ -81,6 +83,10 @@ in the Settings list's "In the Lab" group and in the Progressions "Clear bar ⌫
 - Esc closes: Prompt, Confirm, Rename, AddFolders, ExcludeFolders, FilterPanel/FilterBar, Popover,
   Menu (capture phase), SettingsDialog (only when it's the only dialog open).
 - PreviewPanel tag input, TempoTools and Editor number inputs: `Enter` commits/blurs, `Esc` cancels.
+- Preview and mini player waveforms (`useSeekOrDrag` in PreviewPanel), when focused: `← →` seek a beat (`⇧` a
+  bar; a twentieth or a quarter of a one-shot), `Home` back to where playback starts. They stop propagation, so the
+  global `←` waits until the waveform loses focus; `↑ ↓` still browse.
+- Drag tile and mini player Drag button after a failed render: `Enter`/`Space` try again.
 
 ### Mouse plus modifier
 `Mod`-click a row toggles it in the picked set, `⇧`-click picks a range (`⇧+Mod` adds a range),

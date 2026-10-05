@@ -2,7 +2,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, Download, Minus, Pause, Play, Plus, Repeat, RotateCcw, Square, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
-import { toggleLoop } from "../lib/actions";
+import { askProjectKey, toggleLoop } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate } from "../lib/format";
 import { DEFAULT_EDIT, type Processing } from "../lib/processing";
@@ -431,7 +431,7 @@ function KeyCard({ row, processing }: { row: SampleRow; processing: Processing }
       {row.keySource === "audio" && <p className="m-0 -mt-1 text-small leading-snug text-text3">Key detected from the audio — worth checking by ear.</p>}
       <Switch
         checked={project.matchKey && project.key != null}
-        onChange={(v) => (project.key ? project.set({ matchKey: v }) : toast("Set a project key in the title bar first", "info"))}
+        onChange={(v) => (project.key ? project.set({ matchKey: v }) : askProjectKey())}
         label="Match project key"
       />
       <PitchStepper row={row} processing={processing} />
@@ -573,7 +573,7 @@ function ShapeCard({ row }: { row: SampleRow }) {
 }
 
 function OutputCard({ row }: { row: SampleRow }) {
-  const { state, processing } = useRender(row);
+  const { state, processing, retry } = useRender(row);
   const [busy, setBusy] = useState(false);
   const exportFile = async () => {
     if (!processing) return;
@@ -604,7 +604,7 @@ function OutputCard({ row }: { row: SampleRow }) {
   };
   return (
     <Card title="Output">
-      <DragTile row={row} state={state} processing={processing} tall />
+      <DragTile row={row} state={state} processing={processing} onRetry={retry} tall />
       <div className="grid grid-cols-2 gap-2">
         <button type="button" disabled={busy || !processing?.processed} onClick={variation} className="h-[30px] rounded-md border border-line2 text-small text-text2 hover:bg-raised disabled:opacity-40" title="Render into the Variations folder of your saved sounds (see Settings) and add it to your library">
           Save variation

@@ -1,11 +1,12 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ListEnd, Maximize2, Pause, Pin, Play, Repeat, Search, Star, X } from "lucide-react";
 import { forwardRef, memo, useEffect, useRef } from "react";
-import { dragOut, dragSample, sampleMenu, setPlayNext, toggleLoop } from "../lib/actions";
+import { dragSample, sampleMenu, setPlayNext, toggleLoop } from "../lib/actions";
 import { bpmText, fmtCount, fmtLength, keyText } from "../lib/format";
 import { keyFilterLabel } from "../lib/keys";
 import { isMac, isWindows, modKey } from "../lib/platform";
-import { useRender } from "../lib/renders";
+import type { Processing } from "../lib/processing";
+import { useRender, type RenderState } from "../lib/renders";
 import type { SampleRow } from "../lib/types";
 import { useBrowse } from "../store/browse";
 import { useLibrary } from "../store/library";
@@ -15,7 +16,7 @@ import { useEdit, useEdits } from "../store/project";
 import { useUi } from "../store/ui";
 import { lengthLabel, tempoLabel } from "./FilterPanel";
 import { openContextMenu } from "./Menu";
-import { Clock, PitchStepper, PLAY_NEXT_LABEL, ReverseIcon, useElementWidth } from "./PreviewPanel";
+import { Clock, dragHeard, PitchStepper, PLAY_NEXT_LABEL, ReverseIcon, useElementWidth, useSeekOrDrag } from "./PreviewPanel";
 import { KeyControl, SyncSwitch, TempoControl } from "./ProjectControls";
 import { cx, IconButton, Kbd } from "./ui";
 import { MiniWave } from "./Waveforms";
@@ -195,47 +196,72 @@ function MiniList() {
   );
 }
 
-function MiniDrag({ row }: { row: SampleRow }) {
-  const { state, processing } = useRender(row);
+/** The mini player's drag button; like the full window's tile, it says when the drive is gone or the render failed. */
+function MiniDrag({ row, state, processing, onRetry }: { row: SampleRow; state: RenderState; processing: Processing; onRetry: () => void }) {
+  const offline = !row.online;
+  const failed = !offline && state.kind === "error";
   return (
     <div
       role="button"
-      tabIndex={-1}
-      draggable={row.online && state.kind !== "error"}
-      aria-label="Drag into your DAW"
-      title={state.kind === "rendering" ? "Rendering…" : processing?.processed ? `Drag the processed clip (${processing.label})` : "Drag into your DAW"}
+      tabIndex={failed ? 0 : -1}
+      draggable={!offline && !failed}
+      aria-label={failed ? "Couldn't render. Try again" : offline ? "Drive not connected" : "Drag into your DAW"}
+      title={
+        offline
+          ? "This sample's drive isn't connected"
+          : state.kind === "error"
+            ? `Couldn't render: ${state.message}. Click to try again.`
+            : state.kind === "rendering"
+              ? "Rendering…"
+              : processing.processed
+                ? `Drag the processed clip (${processing.label})`
+                : "Drag into your DAW"
+      }
       onDragStart={(e) => {
         e.preventDefault();
-        if (state.kind === "original") dragOut([state.path], [row.id]);
-        else dragSample(row);
+        dragHeard(row, state);
       }}
-      className={cx("flex h-8 shrink-0 cursor-grab items-center gap-1.5 rounded-[7px] border border-line2 bg-raised pr-2.5 pl-2 text-small font-semibold active:cursor-grabbing", state.kind === "rendering" && "animate-soft-pulse")}
+      onClick={failed ? onRetry : undefined}
+      onKeyDown={(e) => {
+        if (failed && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          onRetry();
+        }
+      }}
+      className={cx(
+        "flex h-8 shrink-0 items-center gap-1.5 rounded-[7px] border border-line2 bg-raised pr-2.5 pl-2 text-small font-semibold",
+        offline ? "cursor-default opacity-60" : failed ? "cursor-pointer hover:bg-raised2" : "cursor-grab active:cursor-grabbing",
+        state.kind === "rendering" && !offline && "animate-soft-pulse",
+      )}
     >
       <Grip />
-      Drag
+      {failed ? "Retry" : "Drag"}
     </div>
   );
 }
 
-/** The selected sample's waveform; click to play from a position. */
-function PreviewWave({ row, reverse }: { row: SampleRow; reverse: boolean }) {
+/** The selected sample's waveform; click to play from a position, or drag it into your DAW (as in the full window). */
+function PreviewWave({ row, reverse, state, beat }: { row: SampleRow; reverse: boolean; state: RenderState; beat: number | null }) {
   const [box, width] = useElementWidth<HTMLDivElement>();
   const duration = row.duration ?? 0;
+  const grab = useSeekOrDrag(row, state, (clientX) => {
+    const r = box.current!.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    return (reverse ? 1 - f : f) * duration;
+  }, { reverse, beat });
   return (
     <div
       ref={box}
-      className="relative h-[52px]"
+      className={cx("relative h-[52px] rounded-sm", grab.canDrag && "cursor-grab active:cursor-grabbing", !row.online && "opacity-50")}
       role="slider"
-      tabIndex={-1}
-      aria-label={`Waveform of ${row.name}. Click to play from a position.`}
+      tabIndex={0}
+      aria-label={`Waveform of ${row.name}. Click or use the arrow keys to play from a position${grab.canDrag ? ", or drag it into your DAW" : ""}.`}
+      title={!row.online ? "This sample's drive isn't connected" : grab.canDrag ? (state.kind === "rendering" ? "Rendering…" : "Click to play from here, or drag into your DAW") : undefined}
       aria-valuemin={0}
       aria-valuemax={Math.round(duration * 100) / 100}
-      onMouseDown={(e) => {
-        if (!duration) return;
-        const r = e.currentTarget.getBoundingClientRect();
-        const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-        usePlayer.getState().seek(row, (reverse ? 1 - f : f) * duration);
-      }}
+      {...grab.aria}
+      {...grab.handlers}
+      onMouseLeave={grab.cancel}
     >
       {width > 0 && <MiniWave peaks={row.peaks} width={width} height={52} sampleId={row.id} emphasized />}
     </div>
@@ -249,7 +275,7 @@ function MiniPreview() {
   const playNext = usePrefs((s) => s.playNext);
   const edit = useEdit(row?.id);
   const update = useEdits((s) => s.update);
-  const { processing } = useRender(row);
+  const { state, processing, retry } = useRender(row);
   if (!row || !processing) {
     return (
       <section aria-label="Preview" className="flex h-[150px] shrink-0 items-center justify-center border-t border-line bg-panel px-6 text-center text-ui text-text3">
@@ -266,7 +292,7 @@ function MiniPreview() {
         </span>
         <Clock row={row} />
       </div>
-      <PreviewWave row={row} reverse={edit.reverse} />
+      <PreviewWave row={row} reverse={edit.reverse} state={state} beat={processing.params.beat} />
       <div className="flex items-center gap-1.5">
         <button
           type="button"
@@ -293,7 +319,7 @@ function MiniPreview() {
         </IconButton>
         <PitchStepper row={row} processing={processing} compact />
         <div className="flex-1" />
-        <MiniDrag row={row} />
+        <MiniDrag row={row} state={state} processing={processing} onRetry={retry} />
       </div>
     </section>
   );

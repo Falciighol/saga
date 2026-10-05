@@ -48,6 +48,9 @@ a subscription in `App.tsx`.
 - DOM event `saga:open-filters`: dispatched by `useHotkeys` (⌘⇧F), listened to by
   `FilterBar.tsx`. FilterBar is only mounted in the full window's list view without the editor,
   so the hotkey switches there first and dispatches on the next tick.
+- DOM event `saga:open-project-key` (`OPEN_PROJECT_KEY`): dispatched by `askProjectKey()` (lib/actions) when a Match
+  switch is turned on with no project key (PreviewPanel, Editor). `KeyControl` opens its popover on it through
+  `Popover`'s `openOn` prop. Only one KeyControl is mounted at a time (title bar or mini player).
 - Global hotkey gate: `useHotkeys` does nothing (except interface zoom) while `useMenu` has a menu
   open or any `[role="dialog"]` exists. `SettingsDialog`, `Popover`, `Prompt`, `FilterPanel`,
   `Rename`, `AddFolders` and `ExcludeFolders` all set that role. Any new modal, popover or panel

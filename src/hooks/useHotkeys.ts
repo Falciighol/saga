@@ -16,11 +16,32 @@ import { useSimilar } from "../store/similar";
 import { useSoundMap } from "../store/soundmap";
 import { useUi } from "../store/ui";
 
+/**
+ * The element the keyboard last moved focus to. A control you clicked keeps focus too, but never counts, even after
+ * later key presses (unlike :focus-visible in Chromium), so Space after clicking Reverse still plays the sample.
+ */
+let keyboardFocus: EventTarget | null = null;
+let pointerDown = false;
+const onPointerDown = () => {
+  pointerDown = true;
+};
+const onFocusIn = (e: FocusEvent) => {
+  keyboardFocus = pointerDown ? null : e.target;
+  pointerDown = false;
+};
+
+/** A button, switch or menu item you tabbed to: Enter and Space press it, as everywhere else, instead of playing. */
+function keyboardFocusedControl(target: EventTarget | null): boolean {
+  if (target !== keyboardFocus || !(target instanceof Element)) return false;
+  return target.matches('button, a[href], summary, [role="button"], [role="switch"], [role="checkbox"], [role="menuitem"], [role="tab"]');
+}
+
 /** Keyboard-first browsing. Arrow keys keep working while the search box has focus. */
 export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSettings: () => void) {
   const tap = useTapTempo((bpm) => useProject.getState().set({ bpm }));
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      pointerDown = false;
       // Interface size works everywhere, Settings included.
       if (hasMod(e) && !e.altKey && ["=", "+", "-", "_", "0"].includes(e.key)) {
         e.preventDefault();
@@ -32,6 +53,7 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       // Menus and dialogs (filters, settings, prompts) handle their own keys, Escape included.
       if (useMenu.getState().menu || document.querySelector('[role="dialog"]')) return;
       if (e.target instanceof HTMLInputElement && e.target.type === "range" && e.key.startsWith("Arrow")) return;
+      if ((e.key === "Enter" || e.key === " ") && !hasMod(e) && keyboardFocusedControl(e.target)) return;
       const browse = useBrowse.getState();
       const player = usePlayer.getState();
       const typing = isTextInput(e.target);
@@ -182,7 +204,13 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    window.addEventListener("focusin", onFocusIn, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+      window.removeEventListener("focusin", onFocusIn, true);
+    };
   }, [search, openSettings, tap]);
 }
 
