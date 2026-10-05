@@ -180,6 +180,8 @@ Press `H` for a workspace for the harmony of a track.
   and numbers fonts (they work offline) or any font installed on your computer, and an interface
   size from 75% to 200%.
 - **Updates itself**: new versions download in the background and install when you restart.
+  Afterwards a small note says what changed, and Settings › Updates › What's new lists every
+  version.
 
 The first time Saga sees your library it listens to every sample once (the sidebar says
 "Listening to your samples"). That takes a few minutes for a big library. Search works right

@@ -54,6 +54,8 @@ export interface PrefValues {
   renamePresets: SavedPreset[];
   /** The sample list's columns in the user's order, and which show; null for the usual ones. */
   listColumns: ColumnPref[] | null;
+  /** The newest version whose What's new the user has seen or put off; null before Saga started recording it. */
+  lastSeenVersion: string | null;
 }
 
 interface Prefs extends PrefValues {
@@ -85,6 +87,7 @@ export const DEFAULT_PREFS: PrefValues = {
   renamePattern: null,
   renamePresets: [],
   listColumns: null,
+  lastSeenVersion: null,
 };
 
 export const usePrefs = create<Prefs>()(

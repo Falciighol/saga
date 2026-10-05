@@ -95,12 +95,14 @@ src-tauri/src
 src
   store/       Zustand stores: browse (queries, paging, selection, picked samples), library,
                player, prefs, project (tempo/key/scale, and per-sample edits), editor, ui
-               (list/map/lab, mini player), similar, soundmap, lab, updates, toasts
+               (list/map/lab, mini player), similar, soundmap, lab, updates, whatsNew (the card
+               after an update and the What's new dialog), toasts
   hooks/       useHotkeys (every app-wide keyboard shortcut), useTheme (theme, fonts, size)
   components/lab/  the Lab: scale list, pitch circle, keyboard, chords, progressions, key finder,
                tempo & tuning, side panels
   components/  UI; shared buttons, switches, chips and labels are in ui.tsx, menus in Menu.tsx; the
-               list's columns (cells, header, the Columns menu) in ListColumns.tsx
+               list's columns (cells, header, the Columns menu) in ListColumns.tsx; the What's new
+               card and dialog in WhatsNew.tsx
   lib/         API bindings (api.ts) and types, actions (what menus, buttons and keys share:
                dragging out, setting key/tempo, collections, Find similar), processing
                (tempo/key math, one source of truth for preview and render), theory (scales,
@@ -110,7 +112,8 @@ src
                pattern, its tokens and presets), listColumns (the list's columns, their
                order and which show), renders, soundmap, theme palette,
                fonts, interface size (scale), platform (⌘ or Ctrl), autoTitle (tooltips for
-               cut-off text), waveform drawing, formatting
+               cut-off text), changelog (reads the bundled CHANGELOG.md for What's new),
+               waveform drawing, formatting
   dev/         the mock backend for working on the UI in a browser
 ```
 
@@ -128,6 +131,11 @@ and installs only when the user clicks Restart. The app reads
 bundles signed with the key whose public half is in `src-tauri/tauri.conf.json`
 (`plugins.updater.pubkey`). Dev builds never check on their own.
 
+What changed in each version is written once, in [`CHANGELOG.md`](../CHANGELOG.md), for producers
+(the format is in the comment at its top). Add to its `## Unreleased` section as changes land. The
+app bundles the file: after an update it shows a small "You're on Saga x.y.z" card, and Settings ›
+Updates › What's new lists every version. The same notes go into the GitHub release.
+
 To ship a version:
 
 ```bash
@@ -137,14 +145,17 @@ npm run release:mac       # on the Mac
 npm run release:windows   # on the Windows PC
 ```
 
-1. `npm run set-version` writes the version to `package.json`, `tauri.conf.json`, `Cargo.toml`
-   and `Cargo.lock`, commits them (`chore: bump version to 0.2.0 …`) and tags `v0.2.0`. Pass
-   `--no-git` to only edit the files. `node scripts/version.mjs --check` says whether the four
-   agree. The workflow runs it and refuses a tag that doesn't match.
+1. `npm run set-version` turns CHANGELOG.md's `## Unreleased` into `## 0.2.0 — <today>` (it
+   stops if there are no notes for the version), writes the version to `package.json`,
+   `tauri.conf.json`, `Cargo.toml` and `Cargo.lock`, commits them with the changelog
+   (`chore: bump version to 0.2.0 …`) and tags `v0.2.0`. Pass `--no-git` to only edit the files.
+   `node scripts/version.mjs --check` says whether the four agree and CHANGELOG.md has notes for
+   the version. The workflow runs it and refuses a tag that fails.
 2. The pushed tag starts `.github/workflows/release.yml` (it can also be run from the Actions
    tab). It is the only thing that creates the release: a **draft** whose notes come from
-   `.github/RELEASE_TEMPLATE.md` (install steps plus a "What's new" skeleton). Nothing is built in
-   CI. Edit the draft's "What's new" before publishing.
+   `.github/RELEASE_TEMPLATE.md` (install steps), with "What's new" filled from the version's
+   CHANGELOG.md notes by `scripts/release-notes.mjs`. Nothing is built in CI. Fix wording in
+   CHANGELOG.md rather than only in the draft, so the app and GitHub say the same thing.
 3. `npm run release:mac` builds the Mac version on your Mac: one universal app for Apple Silicon
    and Intel, signed with your Developer ID and notarized by Apple (notarizing in CI would use up
    the macOS runner minutes). It checks that Gatekeeper accepts the app, uploads the .dmg and the

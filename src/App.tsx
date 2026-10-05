@@ -18,6 +18,7 @@ import { SoundMapView } from "./components/SoundMap";
 import { TitleBar } from "./components/TitleBar";
 import { TypeBar } from "./components/TypeBar";
 import { Welcome } from "./components/Welcome";
+import { WhatsNewHost, WhatsNewNotice } from "./components/WhatsNew";
 import { useHotkeys } from "./hooks/useHotkeys";
 import { useThemeSync } from "./hooks/useTheme";
 import { initDragIcon, playNextAfter } from "./lib/actions";
@@ -31,6 +32,7 @@ import { usePrefs } from "./store/prefs";
 import { useSimilar } from "./store/similar";
 import { useUi } from "./store/ui";
 import { startUpdateChecks } from "./store/updates";
+import { startWhatsNew } from "./store/whatsNew";
 
 export default function App() {
   useThemeSync();
@@ -52,6 +54,7 @@ export default function App() {
     startBrowsing();
     const stopParamsSync = startParamsSync();
     const stopUpdateChecks = startUpdateChecks();
+    void startWhatsNew();
 
     const subs = [
       events.onProgress((p) => useLibrary.getState().setProgress(p)),
@@ -85,6 +88,7 @@ export default function App() {
     <>
       {/* First, so dialogs opened from Settings (confirmations, adding folders) stack above it. */}
       {settings && <SettingsDialog onClose={() => setSettings(false)} />}
+      <WhatsNewHost />
       <MenuHost />
       <RenameHost />
       <AddFoldersHost />
@@ -93,6 +97,7 @@ export default function App() {
       <ConfirmHost />
       <Toasts />
       <UpdateNotice />
+      <WhatsNewNotice />
       <DropTarget />
     </>
   );

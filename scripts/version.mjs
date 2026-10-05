@@ -1,10 +1,13 @@
 // Sets the app version everywhere it's written, or checks that they agree.
-//   node scripts/version.mjs 0.2.0     set it, commit the bump and tag v0.2.0 (pass --no-git to only edit files)
-//   node scripts/version.mjs --check   exit 1 if the files disagree (CI runs this before a release)
+//   node scripts/version.mjs 0.2.0     set it, date its CHANGELOG.md notes, commit the bump and tag v0.2.0
+//                                      (pass --no-git to only edit files)
+//   node scripts/version.mjs --check   exit 1 if the files disagree or CHANGELOG.md has no notes for the version
+//                                      (CI runs this before a release)
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { dateRelease, section } from "./changelog.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const files = {
@@ -25,6 +28,11 @@ if (!arg || arg === "--check") {
     console.error("Versions disagree. Run: npm run set-version -- <x.y.z>");
     process.exit(1);
   }
+  const [version] = versions;
+  if (!section(version)) {
+    console.error(`CHANGELOG.md has no notes for ${version}. The app shows them after the update, so add a "## ${version}" section.`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -32,6 +40,12 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(arg)) {
   console.error(`Not a semver version: ${arg}`);
   process.exit(1);
 }
+// The notes go out with the release and show in the app after it updates, so a version without any stops here.
+if (!dateRelease(arg)) {
+  console.error(`CHANGELOG.md has no notes for ${arg}. Write them under "## Unreleased" first.`);
+  process.exit(1);
+}
+console.log(`CHANGELOG.md notes dated for ${arg}`);
 for (const [f, re] of Object.entries(files)) {
   writeFileSync(join(root, f), read(f).replace(re, `$1${arg}$3`));
   console.log(`${current[f]} → ${arg}\t${f}`);
@@ -39,7 +53,7 @@ for (const [f, re] of Object.entries(files)) {
 
 if (process.argv.includes("--no-git")) process.exit(0);
 const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "inherit" });
-git("add", ...Object.keys(files));
+git("add", ...Object.keys(files), "CHANGELOG.md");
 git("commit", "-m", `chore: bump version to ${arg} in package.json, Cargo.toml, Cargo.lock, and tauri.conf.json`);
 git("tag", `v${arg}`);
 console.log(`Committed and tagged v${arg}. Push with: git push origin main v${arg}`);

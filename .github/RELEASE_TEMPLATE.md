@@ -1,5 +1,6 @@
 <!--
-Copy this into the GitHub release body. Delete empty sections and these comments.
+scripts/release-notes.mjs fills this in for the draft release. It replaces the "What's new" part
+below with the version's notes from CHANGELOG.md, and keeps this skeleton only when there are none.
 Write for producers, not developers: say what changed for them, not which file changed.
 -->
 

@@ -98,6 +98,7 @@ mock, all together.
 | `applyValues` (key/tempo by hand) | `api.setSampleValues` → `useBrowse.replaceRows` + `refresh()` (facets count keys) |
 | `startBrowsing()` (App mount) | opens the "all samples" view, which runs the first query |
 | `startUpdateChecks()` (App mount) | updater schedule (launch + every 12 h, off in dev) |
+| `startWhatsNew()` (App mount) | compares the running version with `prefs.lastSeenVersion`; after an update (or, with no value yet, when the library has folders) shows the What's new card. `show()` / `later()` write `lastSeenVersion` |
 
 Shared helpers that many components depend on: `targetIds` / `targetRows` (browse.ts) decide
 whether an action applies to the picked set or the selected row. `editFor` / `useEdit`
@@ -117,6 +118,7 @@ whether an action applies to the picked set or the selected row. `editFor` / `us
 | `keys.ts` names, Camelot, compatibility | `keys.rs` | key spelling and Camelot codes |
 | `browse.ts` `backendFilters()` | `lib.rs` `ipc_tests::ui_filters` | the filters JSON shape |
 | `progressions.ts` | `sequence.rs`, `midi.rs` | a progression as played and as a MIDI clip |
+| `changelog.ts` `parseChangelog`, `isKeys` | `scripts/changelog.mjs` `section`, `isKeys` | CHANGELOG.md headings and key spelling (Node, not Rust) |
 
 Each pair carries a `Mirrors …` comment. Add one to any new pair, and list it here.
 
@@ -124,7 +126,8 @@ Each pair carries a `Mirrors …` comment. Add one to any new pair, and list it 
 
 | Store | Where | Notes |
 | --- | --- | --- |
-| `saga-prefs` | localStorage (`store/prefs.ts`) | `DEFAULT_PREFS`. New fields fall back to defaults through the shallow merge |
+| `saga-prefs` | localStorage (`store/prefs.ts`) | `DEFAULT_PREFS`. New fields fall back to defaults through the shallow merge. `lastSeenVersion` (What's new) isn't in Settings' reset list |
+| `CHANGELOG.md` | repo root, bundled with `?raw` (`lib/changelog.ts`) | What's new in the app and the GitHub release (`release-notes.mjs`); `set-version` dates it, `version.mjs --check` requires the version's notes |
 | `saga-project` | localStorage (`store/project.ts`) | project tempo/key/sync |
 | `saga-lab` | localStorage (`store/lab.ts`, `partialize` whitelist) | Lab tool, scale, sketch, ideas |
 | per-sample edits | memory only (`useEdits`) | gone on restart, by design |

@@ -15,6 +15,7 @@ import { DEFAULT_PREFS, usePrefs, type PrefValues } from "../store/prefs";
 import { toast } from "../store/toasts";
 import { useUi } from "../store/ui";
 import { useUpdates, type UpdateStatus } from "../store/updates";
+import { useWhatsNew } from "../store/whatsNew";
 import { ExcludeFoldersDialog } from "./ExcludeFolders";
 import { useConfirm } from "./Prompt";
 import { chooseFolders } from "./Sidebar";
@@ -127,6 +128,15 @@ function UpdatesSection() {
       </Row>
       <Row label="Check automatically" hint="Looks for a new version when Saga opens and downloads it in the background. Nothing installs until you restart.">
         <Switch checked={autoUpdate} onChange={(v) => usePrefs.getState().set({ autoUpdate: v })} />
+      </Row>
+      <Row label="What's new" hint="What changed in each version, newest first.">
+        <button
+          type="button"
+          onClick={() => useWhatsNew.getState().show()}
+          className="h-8 shrink-0 rounded-lg border border-line2 bg-raised px-3 text-ui text-text hover:bg-raised2"
+        >
+          Open
+        </button>
       </Row>
     </section>
   );

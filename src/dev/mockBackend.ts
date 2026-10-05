@@ -7,6 +7,7 @@ import { camelot, compatibleKeys, keyName } from "../lib/keys";
 import { fittingKeys, scaleFit, scaleNotes } from "../lib/theory";
 import { groupOf } from "../lib/soundmap";
 import type { Collection, Facets, Filters, KeyChange, PitchProfile, QueryRequest, SampleRow, SourceInfo, TempoChange } from "../lib/types";
+import pkg from "../../package.json";
 import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
 
 function rng(seed: number) {
@@ -951,7 +952,8 @@ export function installMockBackend() {
         case "suggested_folders":
           return [];
         case "plugin:app|version":
-          return "0.1.0";
+          // The real version, so What's new finds its notes. Set saga-prefs' lastSeenVersion older to see the card.
+          return pkg.version;
         case "plugin:opener|open_url":
           window.open(String(args.url), "_blank", "noopener");
           return null;
