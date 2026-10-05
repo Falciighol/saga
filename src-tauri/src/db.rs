@@ -333,6 +333,8 @@ fn configure(conn: &Connection) -> DbResult<()> {
             _ => None,
         })
     })?;
+    // NATSORT: name order with numbers counted by value ("Kick 2" before "Kick 10"), for sorting samples and folders.
+    conn.create_collation("NATSORT", natural_cmp)?;
     Ok(())
 }
 
@@ -1172,37 +1174,29 @@ impl Db {
 
 /// Orders names the way a file manager does: ignoring case, and with runs of digits compared by value, so "Take 2" comes before
 /// "Take 10". Folders from a DAW or a pack are often numbered, and plain text order would put "10" and "11" between "1" and "2".
+/// SQLite calls this for every comparison while sorting (as the `NATSORT` collation), so it never allocates.
 fn natural_cmp(a: &str, b: &str) -> Cmp {
-    let (mut a_chars, mut b_chars) = (a.chars().peekable(), b.chars().peekable());
+    let (mut i, mut j) = (0, 0);
     loop {
-        match (a_chars.peek().copied(), b_chars.peek().copied()) {
-            (None, None) => return a.cmp(b),
-            (None, Some(_)) => return Cmp::Less,
-            (Some(_), None) => return Cmp::Greater,
-            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
-                let mut take = |it: &mut std::iter::Peekable<std::str::Chars>| {
-                    let mut run = String::new();
-                    while let Some(c) = it.next_if(char::is_ascii_digit) {
-                        run.push(c);
-                    }
-                    run
-                };
-                let (x, y) = (take(&mut a_chars), take(&mut b_chars));
-                let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
-                // A longer run of digits (without leading zeros) is always the bigger number.
-                let order = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
-                if order != Cmp::Equal {
-                    return order;
-                }
+        let (Some(x), Some(y)) = (a[i..].chars().next(), b[j..].chars().next()) else {
+            return (a.len() - i).cmp(&(b.len() - j)).then_with(|| a.cmp(b));
+        };
+        if x.is_ascii_digit() && y.is_ascii_digit() {
+            let run = |s: &str, at: usize| at + s[at..].bytes().take_while(u8::is_ascii_digit).count();
+            let (end_a, end_b) = (run(a, i), run(b, j));
+            let (x, y) = (a[i..end_a].trim_start_matches('0'), b[j..end_b].trim_start_matches('0'));
+            // Without leading zeros, a longer run of digits is always the bigger number.
+            let order = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+            if order != Cmp::Equal {
+                return order;
             }
-            (Some(x), Some(y)) => {
-                let order = x.to_lowercase().cmp(y.to_lowercase());
-                if order != Cmp::Equal {
-                    return order;
-                }
-                a_chars.next();
-                b_chars.next();
+            (i, j) = (end_a, end_b);
+        } else {
+            let order = x.to_lowercase().cmp(y.to_lowercase());
+            if order != Cmp::Equal {
+                return order;
             }
+            (i, j) = (i + x.len_utf8(), j + y.len_utf8());
         }
     }
 }
@@ -1223,6 +1217,18 @@ mod tests {
         assert_eq!(natural_cmp("Kick 9", "Kick 10"), Cmp::Less);
         assert_eq!(natural_cmp("Pad", "Pad 2"), Cmp::Less);
         assert_eq!(natural_cmp("a", "A"), "a".cmp("A"));
+        assert_eq!(natural_cmp("Bass 01", "Bass 1 Alt"), Cmp::Less);
+        assert_eq!(natural_cmp("Öl 2", "öl 10"), Cmp::Less);
+    }
+
+    #[test]
+    fn samples_sort_by_name_with_numbers_by_value() {
+        let (_d, db, src) = open();
+        db.upsert_files(src, "lib", &[scanned("Takes", "Take 10"), scanned("Takes", "take 2"), scanned("Takes", "Take 1")]).unwrap();
+        let takes = Filters { source_id: Some(src), dir: Some("Takes".into()), ..Default::default() };
+        assert_eq!(names(&db, takes.clone()), vec!["Take 1", "take 2", "Take 10"]);
+        let res = db.query(&QueryRequest { filters: takes, sort: "name".into(), desc: true, offset: 0, limit: 10, seed: 0 }).unwrap();
+        assert_eq!(res.rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), vec!["Take 10", "take 2", "Take 1"]);
     }
 
     fn scanned(dir: &str, name: &str) -> ScannedFile {

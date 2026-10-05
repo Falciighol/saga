@@ -404,7 +404,8 @@ function query(req: QueryRequest) {
       const y = k(b) ?? Infinity;
       return (x < y ? -1 : x > y ? 1 : 0) * dir;
     });
-  if (req.sort === "name") by((r) => r.name.toLowerCase());
+  // Mirrors the NATSORT collation in db.rs: numbers count by value, so "Kick 2" comes before "Kick 10".
+  if (req.sort === "name") rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) * dir);
   else if (req.sort === "bpm") by((r) => r.bpm);
   else if (req.sort === "duration") by((r) => r.duration);
   else if (req.sort === "created") by((r) => r.created);

@@ -366,22 +366,22 @@ pub fn order_by(sort: &str, desc: bool, has_text: bool, seed: i64, fit: Option<u
     let dir = if desc { "DESC" } else { "ASC" };
     let flip = if desc { "ASC" } else { "DESC" };
     match sort {
-        "fit" if fit.is_some() => format!("scale_fit(s.features, {}) DESC NULLS LAST, s.name COLLATE NOCASE", fit.unwrap()),
-        "name" => format!("s.name COLLATE NOCASE {dir}, s.id"),
+        "fit" if fit.is_some() => format!("scale_fit(s.features, {}) DESC NULLS LAST, s.name COLLATE NATSORT", fit.unwrap()),
+        "name" => format!("s.name COLLATE NATSORT {dir}, s.id"),
         // Dates read newest first when descending, like the other columns.
         "added" => format!("s.added_at {dir}, s.id {dir}"),
-        "created" => format!("s.created {dir} NULLS LAST, s.name COLLATE NOCASE"),
+        "created" => format!("s.created {dir} NULLS LAST, s.name COLLATE NATSORT"),
         "played" => format!("s.last_played {flip} NULLS LAST, s.play_count DESC"),
-        "duration" => format!("s.duration {dir} NULLS LAST, s.name COLLATE NOCASE"),
-        "bpm" => format!("s.bpm {dir} NULLS LAST, s.name COLLATE NOCASE"),
+        "duration" => format!("s.duration {dir} NULLS LAST, s.name COLLATE NATSORT"),
+        "bpm" => format!("s.bpm {dir} NULLS LAST, s.name COLLATE NATSORT"),
         "key" => format!(
             "CASE WHEN s.key_mode IN (0, 1) THEN \
                ((7 + ((((CASE s.key_mode WHEN 1 THEN s.key_pc ELSE s.key_pc - 3 END) - 9) % 12 + 12) % 12) * 7 % 12) % 12) * 2 + (1 - s.key_mode) \
-             WHEN s.key_mode = 2 THEN 100 + s.key_pc ELSE 1000 END {dir}, s.name COLLATE NOCASE"
+             WHEN s.key_mode = 2 THEN 100 + s.key_pc ELSE 1000 END {dir}, s.name COLLATE NATSORT"
         ),
         "random" => format!("((s.id * 2654435761 + {}) % 4294967291)", seed.rem_euclid(1 << 31)),
-        _ if has_text => "f.rank, s.favorite DESC, s.name COLLATE NOCASE".into(),
-        _ => "s.dir COLLATE NOCASE, s.name COLLATE NOCASE".into(),
+        _ if has_text => "f.rank, s.favorite DESC, s.name COLLATE NATSORT".into(),
+        _ => "s.dir COLLATE NATSORT, s.name COLLATE NATSORT".into(),
     }
 }
 
