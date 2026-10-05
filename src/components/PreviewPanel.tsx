@@ -4,7 +4,7 @@ import { usePalette } from "../hooks/useTheme";
 import { askProjectKey, collectionSubmenu, dragOut, dragSample, findSimilar, keySubmenu, reveal, setPlayNext, tempoSubmenu, toggleLoop } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { barsCount, ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate, hasTempo, sourceHint } from "../lib/format";
-import { revealLabel } from "../lib/platform";
+import { modKey, revealLabel } from "../lib/platform";
 import { projectKeyLabel } from "../lib/keys";
 import { DEFAULT_EDIT, keyLabel, type Processing } from "../lib/processing";
 import { useRender, type RenderState } from "../lib/renders";
@@ -874,7 +874,7 @@ function PreviewBody({ row, state, processing, retry, tags, short }: { row: Samp
             <FolderPlus size={15} strokeWidth={1.75} />
             <span className="@max-[860px]/preview:sr-only">Collect</span>
           </button>
-          <IconButton label={revealLabel()} onClick={() => void reveal(row.path)} className="border border-line2">
+          <IconButton label={`${revealLabel()} (${modKey}⇧R)`} onClick={() => void reveal(row.path)} className="border border-line2">
             <FolderSearch size={15} strokeWidth={1.75} />
           </IconButton>
           <DragTile row={row} state={state} processing={processing} onRetry={retry} />

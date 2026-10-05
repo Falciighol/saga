@@ -215,6 +215,8 @@ On Windows, use Ctrl where these say ⌘.
 | `⌘⇧F` | Filters |
 | `Esc` | Clear the selection or search, close the editor, or stop |
 | `⌘A` | Select all results (`⌘`-click or `⇧`-click to select several) |
+| `⌘R` | Rename the selected samples |
+| `⌘⇧R` | Reveal in Finder (Show in folder on Windows) |
 | `⌥`/`Alt`-click a folder's arrow | Open or close it with every folder inside closed |
 | `⌘,` | Settings |
 | `⌘+` `⌘−` `⌘0` | Interface bigger, smaller, 100% |

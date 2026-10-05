@@ -22,7 +22,8 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
    Return if the key is an arrow on a range input, or Enter/Space on a button, switch or menu item
    the keyboard moved focus to (`keyboardFocusedControl`), so tabbing to a control and pressing it
    works. A control focused by a mouse click never counts, so Space after clicking still plays.
-3. Then `Mod+K`/`Mod+F`, `Mod+Shift+F`, `Mod+A`, `Mod+,`.
+3. Then `Mod+K`/`Mod+F`, `Mod+Shift+F`, `Mod+A`, `Mod+R`/`Mod+Shift+R`, `Mod+,`. `Mod+R` is always swallowed, since
+   the web view would otherwise reload.
 4. **Lab block** (view is `lab`, not mini, no editor, not typing, no modifier): the keys depend on
    the Lab tool, and `progressionKey()` handles the Progressions tool.
 5. `↑ ↓` (not while the editor is open), `Enter`, `Escape` (a priority chain, see below).
@@ -40,6 +41,8 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
 | `/` | not typing | focus search | README, Settings list |
 | `Mod ⇧ F` | | leave mini / map / Lab / editor for the list, then dispatch `saga:open-filters` (FilterBar) | README, Settings list |
 | `Mod A` | list view, not mini, no editor, not typing | `browse.pickAll()` | README, Settings list |
+| `Mod R` | not typing (search box is fine) | `renameTargets()` (lib/actions): picked samples or the selected one | README, Settings list, "Rename…" menu hints, SelectionBar Rename title |
+| `Mod ⇧ R` | row selected, not typing (search box is fine) | `reveal(row.path)` (lib/actions) | README, Settings list, `revealLabel()` menu hint, PreviewPanel reveal button label |
 | `Mod ,` | | `openSettings()` (App state) | README, Settings list |
 | `↑ ↓` (⇧ = 10) | no editor; in the search box too | `browse.move(±1/±10)`. On the map: `similar.move` | README, Settings list (both, plus the map row), SampleCard hint |
 | `Enter` | in search or not typing, a row selected | `player.play(row)` from the start | README, Settings list |

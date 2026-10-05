@@ -384,6 +384,8 @@ const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
       [[`${modKey} ⇧ F`], "Open filters"],
       [["Esc"], "Clear the selection or search, close the editor, or stop"],
       [[`${modKey} A`], "Select all results"],
+      [[`${modKey} R`], "Rename the selected samples"],
+      [[`${modKey} ⇧ R`], revealLabel()],
       [[`${modKey} / ⇧ click`], "Select several samples"],
       [[`${altKey} click`], "On a folder's arrow: close every folder inside too"],
       [[`${modKey} ,`], "Settings"],
