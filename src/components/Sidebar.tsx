@@ -1,20 +1,20 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { AudioLines, ChevronDown, ChevronRight, Clock, Folder, FolderMinus, FolderPlus, HardDrive, Plus, RefreshCw, Sparkle, Star, Trash2 } from "lucide-react";
+import { AudioLines, ChevronDown, ChevronRight, ChevronsDownUp, Clock, Folder, FolderMinus, FolderPlus, HardDrive, Plus, RefreshCw, Sparkle, Star, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { newCollection, reveal } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { fmtCount } from "../lib/format";
-import { revealLabel } from "../lib/platform";
+import { altKey, revealLabel } from "../lib/platform";
 import { COLLECTION_COLORS } from "../lib/theme";
 import type { DirNode, SourceInfo } from "../lib/types";
 import { useBrowse, type View } from "../store/browse";
-import { dirKey, useLibrary } from "../store/library";
+import { dirKey, isBelow, useLibrary } from "../store/library";
 import { DEFAULT_PREFS, usePrefs } from "../store/prefs";
 import { toast } from "../store/toasts";
 import { reviewFolders } from "./AddFolders";
 import { openContextMenu } from "./Menu";
 import { useConfirm, usePrompt } from "./Prompt";
-import { cx, SectionLabel } from "./ui";
+import { cx, IconButton, SectionLabel } from "./ui";
 
 function sameView(a: View, b: View): boolean {
   if (a.type !== b.type) return false;
@@ -102,6 +102,20 @@ async function includeFolder(source: SourceInfo, dir: string) {
   toast(`Indexing “${dir.split("/").pop()}” again`, "info");
 }
 
+/** A folder's arrow was clicked. ⌥/Alt-click also closes every folder inside, the way Ableton folds all its tracks. */
+function toggleFolder(e: React.MouseEvent, sourceId: number, dir: string) {
+  const library = useLibrary.getState();
+  if (e.altKey) library.collapseAll(sourceId, dir);
+  library.toggleExpanded(sourceId, dir);
+}
+
+/** The right-click menu item that closes every folder inside this one. */
+function collapseItem(sourceId: number, dir: string) {
+  const { expanded, collapseAll } = useLibrary.getState();
+  const anyOpen = Object.keys(expanded).some((k) => expanded[k] && isBelow(k, sourceId, dir));
+  return { label: "Collapse subfolders", icon: <ChevronsDownUp size={14} />, disabled: !anyOpen, onSelect: () => collapseAll(sourceId, dir) };
+}
+
 function FolderTree({ source, dir, depth }: { source: SourceInfo; dir: string; depth: number }) {
   const nodes = useLibrary((s) => s.dirs[dirKey(source.id, dir)]);
   const expanded = useLibrary((s) => s.expanded);
@@ -122,7 +136,8 @@ function FolderTree({ source, dir, depth }: { source: SourceInfo; dir: string; d
                 <button
                   type="button"
                   aria-label={open ? `Collapse ${n.name}` : `Expand ${n.name}`}
-                  onClick={() => toggle(source.id, n.dir)}
+                  title={`${altKey}-click to close everything inside too`}
+                  onClick={(e) => toggleFolder(e, source.id, n.dir)}
                   className="absolute top-[7px] z-10 grid h-4 w-4 place-items-center rounded text-text3 hover:text-text"
                   style={{ left: 6 + depth * 14 }}
                 >
@@ -141,6 +156,7 @@ function FolderTree({ source, dir, depth }: { source: SourceInfo; dir: string; d
                 onContextMenu={(e) =>
                   openContextMenu(e, [
                     { label: revealLabel(), onSelect: () => void reveal(`${source.path}/${n.dir}`) },
+                    ...(n.hasChildren ? [collapseItem(source.id, n.dir)] : []),
                     "separator",
                     { label: "Exclude from library", danger: true, icon: <FolderMinus size={14} />, onSelect: () => excludeFolder(source, n) },
                   ])
@@ -270,6 +286,8 @@ export function Sidebar() {
   const sources = useLibrary((s) => s.sources);
   const expanded = useLibrary((s) => s.expanded);
   const toggle = useLibrary((s) => s.toggleExpanded);
+  const collapseAll = useLibrary((s) => s.collapseAll);
+  const anyOpen = Object.values(expanded).some(Boolean);
   const view = useBrowse((s) => s.view);
   const setView = useBrowse((s) => s.setView);
 
@@ -322,6 +340,7 @@ export function Sidebar() {
     openContextMenu(e, [
       { label: "Rescan", icon: <RefreshCw size={14} />, onSelect: () => void useLibrary.getState().rescan(s.id) },
       { label: revealLabel(), onSelect: () => void reveal(s.path) },
+      collapseItem(s.id, ""),
       ...(s.excluded.length
         ? [{ label: "Include excluded folder", icon: <FolderPlus size={14} />, submenu: s.excluded.map((dir) => ({ label: dir, onSelect: () => void includeFolder(s, dir) })) }]
         : []),
@@ -378,7 +397,14 @@ export function Sidebar() {
         </div>
 
         <div className="flex flex-col gap-px">
-          <SectionLabel className="px-2.5 pb-1.5">Folders</SectionLabel>
+          <div className="flex items-center justify-between pr-1.5 pb-1.5 pl-2.5">
+            <SectionLabel>Folders</SectionLabel>
+            {anyOpen && (
+              <IconButton label="Collapse all folders" size={20} className="rounded text-text3" onClick={() => collapseAll()}>
+                <ChevronsDownUp size={13} strokeWidth={2} />
+              </IconButton>
+            )}
+          </div>
           {sources.map((s) => {
             const key = dirKey(s.id, "");
             const open = !!expanded[key];
@@ -388,7 +414,8 @@ export function Sidebar() {
                   <button
                     type="button"
                     aria-label={open ? `Collapse ${s.name}` : `Expand ${s.name}`}
-                    onClick={() => toggle(s.id, "")}
+                    title={`${altKey}-click to close everything inside too`}
+                    onClick={(e) => toggleFolder(e, s.id, "")}
                     className="absolute top-[7px] left-1 z-10 grid h-4 w-4 place-items-center rounded text-text3 hover:text-text"
                   >
                     {open ? <ChevronDown size={12} strokeWidth={2.25} /> : <ChevronRight size={12} strokeWidth={2.25} />}

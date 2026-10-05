@@ -97,7 +97,9 @@ in the Settings list's "In the Lab" group and in the Progressions "Clear bar ⌫
 ### Mouse plus modifier
 `Mod`-click a row toggles it in the picked set, `⇧`-click picks a range (`⇧+Mod` adds a range),
 double-click plays (SampleList). `Mod`/`⇧`-click a category combines categories (TypeBar).
-`Alt`-click a tag excludes it (FilterPanel). `⇧`-drag on the map switches audition and lasso, and
+`Alt`-click a tag excludes it (FilterPanel). `Alt`-click a folder's arrow in the Sidebar
+opens or closes it with every folder inside closed (`toggleFolder` → `useLibrary.collapseAll`; also shown in the
+arrow's `title`, the README Browsing table and the Settings list). `⇧`-drag on the map switches audition and lasso, and
 `Alt`-drag or middle-drag pans. `Ctrl`/`⌘` + wheel zooms the Editor and map, which is how
 trackpad pinch arrives. `⇧`-click a chord in Scales puts it in the progression's selected bar.
 
