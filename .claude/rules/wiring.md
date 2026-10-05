@@ -21,13 +21,17 @@ component / store
   ↳ faked by src/dev/mockBackend.ts for `npm run dev` in a browser
 ```
 
-- Today there are 68 commands, and `api.ts` and `generate_handler!` match one to one. Keep it
+- Today there are 69 commands, and `api.ts` and `generate_handler!` match one to one. Keep it
   that way. Steps for adding a command are in [ipc-contract.md](ipc-contract.md).
 - Argument names: Tauri turns camelCase JS keys into snake_case Rust parameters
   (`sourceId` → `source_id`). Struct payloads use `#[serde(rename_all = "camelCase")]`.
 - Plugin calls go through their JS packages: dialog, opener (`revealItemInDir`, `openUrl`), drag
   (`startDrag` in `lib/actions.tsx`), process (restart), updater. Each needs a permission in
   `src-tauri/capabilities/default.json`, and the mock handles `plugin:*|*` commands separately.
+- Dialogs that choose where Saga **writes** run in Rust, inside the command (`export_sample`,
+  `pick_saved_sounds_dir`), so a destination path never comes over IPC. The webview may only
+  open folder pickers for reading (`dialog:allow-open`). Don't add `dialog:allow-save` or pass
+  a write path from the UI.
 
 ## 2. Backend → frontend events
 

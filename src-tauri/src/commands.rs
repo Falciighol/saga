@@ -18,6 +18,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Runtime, State, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 
 type CmdResult<T> = Result<T, String>;
 
@@ -461,12 +462,44 @@ pub async fn clear_renders(state: State<'_, AppState>, older_than_days: Option<u
     }
 }
 
+/// Asks where to export the processed sample with a save dialog, then writes it there. Returns the
+/// file written, or `None` when the dialog is cancelled. The dialog runs here rather than in the
+/// webview so the destination never comes over IPC: the page can't make Saga write anywhere the
+/// user didn't pick.
 #[tauri::command]
-pub async fn export_sample(state: State<'_, AppState>, id: i64, params: ProcessParams, dest: String) -> CmdResult<()> {
-    let src = source_path(&state, id)?;
-    let dest = PathBuf::from(dest).with_extension("wav");
-    tauri::async_runtime::spawn_blocking(move || render_to(&src, &params, &dest)).await.map_err(err)??;
-    Ok(())
+pub async fn export_sample<R: Runtime>(
+    window: WebviewWindow<R>,
+    state: State<'_, AppState>,
+    id: i64,
+    params: ProcessParams,
+    file_name: String,
+) -> CmdResult<Option<String>> {
+    // Fail before the dialog when the sample can't be read anyway.
+    source_path(&state, id)?;
+    let mut dialog = window.dialog().file().set_title("Export sample").set_file_name(file_name).add_filter("WAV audio", &["wav"]);
+    #[cfg(desktop)]
+    {
+        dialog = dialog.set_parent(&window);
+    }
+    let Some(picked) = dialog.blocking_save_file() else { return Ok(None) };
+    let dest = picked.into_path().map_err(err)?;
+    export_to(&state, id, params, dest).await.map(|p| Some(p.to_string_lossy().to_string()))
+}
+
+/// Renders the processed sample to `dest`, a path the user picked in a save dialog.
+pub(crate) async fn export_to(state: &AppState, id: i64, params: ProcessParams, dest: PathBuf) -> CmdResult<PathBuf> {
+    let src = source_path(state, id)?;
+    let is_wav = dest.extension().is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+    let dest = if is_wav { dest } else { dest.with_extension("wav") };
+    // The dialog only asked about replacing the name the user typed, so never overwrite the
+    // differently named file that changing the extension may land on.
+    if !is_wav && dest.exists() {
+        let name = dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        return Err(format!("There's already a file named “{name}” there. Pick another name."));
+    }
+    let dest2 = dest.clone();
+    tauri::async_runtime::spawn_blocking(move || render_to(&src, &params, &dest2)).await.map_err(err)??;
+    Ok(dest)
 }
 
 /// Renders into the saved sounds folder's Variations, which is kept in the library so variations are searchable.
@@ -604,20 +637,40 @@ pub async fn saved_sounds_dir(state: State<'_, AppState>) -> CmdResult<SavedSoun
     Ok(saved_sounds(&state))
 }
 
+/// Asks for a new saved sounds folder with a folder picker and moves there; `None` when the picker is
+/// cancelled. Like export, the picker runs here so the folder Saga will write into never comes over IPC.
+#[tauri::command]
+pub async fn pick_saved_sounds_dir<R: Runtime>(window: WebviewWindow<R>, state: State<'_, AppState>) -> CmdResult<Option<SavedSounds>> {
+    let mut dialog = window.dialog().file().set_title("Choose where Saga saves renders and variations").set_directory(state.saved_root());
+    #[cfg(desktop)]
+    {
+        dialog = dialog.set_parent(&window);
+    }
+    let Some(picked) = dialog.blocking_pick_folder() else { return Ok(None) };
+    let path = picked.into_path().map_err(err)?;
+    move_saved_root(&state, Some(&path)).map(Some)
+}
+
+/// Saves new renders and variations in the default folder (~/Music/Saga) again.
+#[tauri::command]
+pub async fn reset_saved_sounds_dir(state: State<'_, AppState>) -> CmdResult<SavedSounds> {
+    move_saved_root(&state, None)
+}
+
 /// Moves where new renders and variations are saved; `None` goes back to the default. Files already
 /// saved stay where they are, since projects may refer to them by path.
-#[tauri::command]
-pub async fn set_saved_sounds_dir(state: State<'_, AppState>, path: Option<String>) -> CmdResult<SavedSounds> {
-    let value = match path.as_deref().map(|p| p.trim_end_matches(['/', '\\'])) {
-        Some(p) if !p.is_empty() && Path::new(p) != state.default_saved_root() => {
-            let probe = Path::new(p).join(render::RENDERS_DIR);
+pub(crate) fn move_saved_root(state: &AppState, path: Option<&Path>) -> CmdResult<SavedSounds> {
+    let path = path.map(|p| p.to_string_lossy()).map(|p| p.trim_end_matches(['/', '\\']).to_string());
+    let value = match path {
+        Some(p) if !p.is_empty() && Path::new(&p) != state.default_saved_root() => {
+            let probe = Path::new(&p).join(render::RENDERS_DIR);
             std::fs::create_dir_all(&probe).map_err(|_| "Saga can't save into that folder".to_string())?;
-            Some(p.to_string())
+            Some(p)
         }
         _ => None,
     };
     state.db.set_setting(crate::SAVED_SOUNDS_SETTING, value.as_deref()).map_err(err)?;
-    Ok(saved_sounds(&state))
+    Ok(saved_sounds(state))
 }
 
 #[derive(Serialize)]

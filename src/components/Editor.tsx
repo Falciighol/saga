@@ -1,4 +1,3 @@
-import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, Download, Minus, Pause, Play, Plus, Repeat, RotateCcw, Square, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
@@ -577,15 +576,9 @@ function OutputCard({ row }: { row: SampleRow }) {
   const [busy, setBusy] = useState(false);
   const exportFile = async () => {
     if (!processing) return;
-    const dest = await save({
-      title: "Export sample",
-      defaultPath: `${row.name}${processing.label ? ` (${processing.label})` : ""}.wav`,
-      filters: [{ name: "WAV audio", extensions: ["wav"] }],
-    });
-    if (!dest) return;
     try {
-      await api.exportSample(row.id, processing.params, dest);
-      toast("Exported", "info");
+      const dest = await api.exportSample(row.id, processing.params, `${row.name}${processing.label ? ` (${processing.label})` : ""}.wav`);
+      if (dest) toast("Exported", "info");
     } catch (e) {
       toast(errorMessage(e));
     }

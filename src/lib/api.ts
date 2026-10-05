@@ -129,7 +129,8 @@ export const api = {
   rendersUsage: () => invoke<RendersUsage>("renders_usage"),
   /** Moves renders older than this many days (all of them for null) to the Trash. */
   clearRenders: (olderThanDays: number | null) => invoke<ClearedRenders>("clear_renders", { olderThanDays }),
-  exportSample: (id: number, params: ProcessParams, dest: string) => invoke<void>("export_sample", { id, params, dest }),
+  /** Asks where to save in a native dialog (fileName is its suggestion), then writes the WAV there. Null when cancelled. */
+  exportSample: (id: number, params: ProcessParams, fileName: string) => invoke<string | null>("export_sample", { id, params, fileName }),
   saveVariation: (id: number, params: ProcessParams, label: string) => invoke<string>("save_variation", { id, params, label }),
   waveformDetail: (id: number, start: number, end: number, buckets: number) =>
     invoke<WaveformDetail>("waveform_detail", { id, start, end, buckets }),
@@ -145,8 +146,10 @@ export const api = {
 
   dragIcon: () => invoke<string>("drag_icon"),
   savedSounds: () => invoke<SavedSounds>("saved_sounds_dir"),
-  /** Moves where new renders and variations are saved (null: the default). Files already saved stay put. */
-  setSavedSoundsDir: (path: string | null) => invoke<SavedSounds>("set_saved_sounds_dir", { path }),
+  /** Asks for a new saved sounds folder in a native picker and moves there; null when cancelled. Files already saved stay put. */
+  pickSavedSoundsDir: () => invoke<SavedSounds | null>("pick_saved_sounds_dir"),
+  /** Saves new renders and variations in the default folder again. */
+  resetSavedSoundsDir: () => invoke<SavedSounds>("reset_saved_sounds_dir"),
   suggestedFolders: () => invoke<SuggestedFolder[]>("suggested_folders"),
 
   /** The notes in a sample's stored description; null until it has one. */

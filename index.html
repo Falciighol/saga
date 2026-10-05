@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Saga</title>
+    <!--
+      Keep inline <style> tags out of this file. Tauri adds a nonce to the CSP's style-src for each one, and a browser
+      that sees a nonce ignores 'unsafe-inline', which would silently break every React style attribute.
+    -->
   </head>
   <body>
     <div id="root"></div>
