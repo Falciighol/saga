@@ -1,5 +1,4 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderMinus, FolderOpen, FolderPen, FolderPlus, HardDrive, Heart, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { openLink, reveal, setPlayNext } from "../lib/actions";
@@ -320,17 +319,13 @@ function SavedSoundsSection() {
     api.savedSounds().then(setSaved).catch(() => {});
   }, []);
 
-  const move = async (path: string | null) => {
+  const move = async (to: () => Promise<SavedSounds | null>) => {
     try {
-      setSaved(await api.setSavedSoundsDir(path));
+      const moved = await to();
+      if (moved) setSaved(moved);
     } catch (e) {
       toast(errorMessage(e));
     }
-  };
-  const change = async () => {
-    const picked = await openDialog({ directory: true, multiple: false, defaultPath: saved?.path, title: "Choose where Saga saves renders and variations" });
-    const path = Array.isArray(picked) ? picked[0] : picked;
-    if (path) await move(path);
   };
 
   const button = "flex h-8 items-center gap-1.5 rounded-lg border border-line2 bg-raised px-3 text-ui text-text hover:bg-raised2 disabled:opacity-50";
@@ -339,14 +334,14 @@ function SavedSoundsSection() {
       <SectionLabel className="pb-1">Saved sounds</SectionLabel>
       <Row label="Location" hint={saved ? `${saved.path}${saved.isDefault ? " (default)" : ""}` : undefined} block>
         <div className="flex flex-wrap gap-2">
-          <button type="button" disabled={!saved} onClick={() => void change()} className={button}>
+          <button type="button" disabled={!saved} onClick={() => void move(api.pickSavedSoundsDir)} className={button}>
             <FolderPen size={14} /> Change…
           </button>
           <button type="button" disabled={!saved} onClick={() => saved && void reveal(saved.path)} className={button}>
             <FolderOpen size={14} /> {revealLabel()}
           </button>
           {saved && !saved.isDefault && (
-            <button type="button" onClick={() => void move(null)} className={button}>
+            <button type="button" onClick={() => void move(api.resetSavedSoundsDir)} className={button}>
               <RotateCcw size={14} /> Use default
             </button>
           )}

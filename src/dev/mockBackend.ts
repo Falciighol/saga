@@ -905,6 +905,9 @@ export function installMockBackend() {
           mockScratchBytes = 0;
           return { cleared: { files: gone.length, bytes: gone.reduce((a, r) => a + r.bytes, 0) }, failed: 0, usage: mockUsage() };
         }
+        case "export_sample":
+          // Stands in for the save dialog, which runs in Rust.
+          return `/Users/me/Desktop/${args.fileName}`;
         case "save_variation":
           return `/Users/me/Music/Saga/Variations/${args.label}.wav`;
         case "waveform_detail": {
@@ -940,8 +943,10 @@ export function installMockBackend() {
           return "/tmp/drag.png";
         case "saved_sounds_dir":
           return { path: savedSounds ?? "/Users/me/Music/Saga", isDefault: savedSounds == null };
-        case "set_saved_sounds_dir":
-          savedSounds = (args.path as string | null) ?? null;
+        case "pick_saved_sounds_dir":
+        case "reset_saved_sounds_dir":
+          // The pick stands in for the folder picker, which runs in Rust.
+          savedSounds = cmd === "pick_saved_sounds_dir" ? "/Users/me/Music/Sample Stash" : null;
           return { path: savedSounds ?? "/Users/me/Music/Saga", isDefault: savedSounds == null };
         case "suggested_folders":
           return [];

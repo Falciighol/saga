@@ -181,7 +181,8 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::set_output_device,
             commands::drag_icon,
             commands::saved_sounds_dir,
-            commands::set_saved_sounds_dir,
+            commands::pick_saved_sounds_dir,
+            commands::reset_saved_sounds_dir,
             commands::suggested_folders,
             commands::set_params,
             commands::set_click,
@@ -556,9 +557,17 @@ mod ipc_tests {
         assert_eq!((cleared["cleared"]["files"].clone(), cleared["failed"].clone(), cleared["usage"]["all"]["files"].clone()), (json!(0), json!(0), json!(2)));
         assert!(Path::new(&rendered).exists());
 
-        let export = data.path().join("exported.wav");
-        call(&w, "export_sample", json!({ "id": bass_id, "params": params, "dest": export.to_string_lossy() })).unwrap();
-        assert!(export.exists());
+        // Export picks its destination in a native dialog the mock runtime can't show, so the IPC
+        // call is checked up to the dialog and the writing half is called directly.
+        let body = json!({ "id": 999_999, "params": params, "fileName": "Bass.wav" });
+        assert_eq!(call(&w, "export_sample", body), Err(json!("Sample not found")));
+        let state = w.state::<AppState>();
+        let export_params: dsp::ProcessParams = serde_json::from_value(params.clone()).unwrap();
+        let export = |dest: PathBuf| tauri::async_runtime::block_on(commands::export_to(&state, bass_id, export_params.clone(), dest));
+        assert_eq!(export(data.path().join("exported.wav")), Ok(data.path().join("exported.wav")));
+        // A name without .wav gets it, but never by replacing a file the dialog didn't ask about.
+        assert_eq!(export(data.path().join("exported")), Err("There's already a file named “exported.wav” there. Pick another name.".into()));
+        assert_eq!(export(data.path().join("other.aif")), Ok(data.path().join("other.wav")));
 
         let variation = call(&w, "save_variation", json!({ "id": bass_id, "params": params, "label": label })).unwrap();
         assert!(Path::new(variation.as_str().unwrap()).parent().unwrap().ends_with("Saga/Variations"));
@@ -618,13 +627,14 @@ mod ipc_tests {
         // The saved sounds folder can be moved; new clips follow it, and the default comes back with null.
         assert_eq!(call(&w, "saved_sounds_dir", json!({})).unwrap()["isDefault"], true);
         let moved = data.path().join("moved");
-        let set = call(&w, "set_saved_sounds_dir", json!({ "path": moved.to_string_lossy() })).unwrap();
+        // The folder comes from a native picker the mock runtime can't show, so the move is called directly.
+        let set = serde_json::to_value(commands::move_saved_root(&w.state::<AppState>(), Some(&moved)).unwrap()).unwrap();
         assert_eq!(set["isDefault"], false);
         assert_eq!(set["path"], json!(moved.to_string_lossy()));
         let mut elsewhere = midi_body();
         elsewhere["name"] = json!("Elsewhere");
         let clip = call(&w, "save_midi", elsewhere).unwrap();
         assert!(Path::new(clip.as_str().unwrap()).starts_with(moved.join("Renders")), "{clip}");
-        assert_eq!(call(&w, "set_saved_sounds_dir", json!({ "path": null })).unwrap()["isDefault"], true);
+        assert_eq!(call(&w, "reset_saved_sounds_dir", json!({})).unwrap()["isDefault"], true);
     }
 }
