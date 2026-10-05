@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 use rusqlite::functions::FunctionFlags;
 use rusqlite::types::ValueRef;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
+use std::cmp::Ordering as Cmp;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -940,7 +941,7 @@ impl Db {
                 has_children,
             })
             .collect();
-        out.sort_by_key(|d| d.name.to_lowercase());
+        out.sort_by(|a, b| natural_cmp(&a.name, &b.name));
         Ok(out)
     }
 
@@ -1169,9 +1170,60 @@ impl Db {
     }
 }
 
+/// Orders names the way a file manager does: ignoring case, and with runs of digits compared by value, so "Take 2" comes before
+/// "Take 10". Folders from a DAW or a pack are often numbered, and plain text order would put "10" and "11" between "1" and "2".
+fn natural_cmp(a: &str, b: &str) -> Cmp {
+    let (mut a_chars, mut b_chars) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (a_chars.peek().copied(), b_chars.peek().copied()) {
+            (None, None) => return a.cmp(b),
+            (None, Some(_)) => return Cmp::Less,
+            (Some(_), None) => return Cmp::Greater,
+            (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+                let mut take = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut run = String::new();
+                    while let Some(c) = it.next_if(char::is_ascii_digit) {
+                        run.push(c);
+                    }
+                    run
+                };
+                let (x, y) = (take(&mut a_chars), take(&mut b_chars));
+                let (x, y) = (x.trim_start_matches('0'), y.trim_start_matches('0'));
+                // A longer run of digits (without leading zeros) is always the bigger number.
+                let order = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+                if order != Cmp::Equal {
+                    return order;
+                }
+            }
+            (Some(x), Some(y)) => {
+                let order = x.to_lowercase().cmp(y.to_lowercase());
+                if order != Cmp::Equal {
+                    return order;
+                }
+                a_chars.next();
+                b_chars.next();
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn natural_order_counts_numbers_by_value() {
+        let mut names = ["UNTITLED 10 Project", "UNTITLED 2 Project", "untitled 1 Project", "UNTITLED 11 Project", "UNTITLED 3 Project"];
+        names.sort_by(|a, b| natural_cmp(a, b));
+        assert_eq!(
+            names,
+            ["untitled 1 Project", "UNTITLED 2 Project", "UNTITLED 3 Project", "UNTITLED 10 Project", "UNTITLED 11 Project"]
+        );
+        assert_eq!(natural_cmp("Kick 02", "Kick 2"), "Kick 02".cmp("Kick 2"));
+        assert_eq!(natural_cmp("Kick 9", "Kick 10"), Cmp::Less);
+        assert_eq!(natural_cmp("Pad", "Pad 2"), Cmp::Less);
+        assert_eq!(natural_cmp("a", "A"), "a".cmp("A"));
+    }
 
     fn scanned(dir: &str, name: &str) -> ScannedFile {
         ScannedFile {

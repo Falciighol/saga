@@ -681,7 +681,10 @@ export function installMockBackend() {
             e.deeper ||= more.length > 0;
             kids.set(child, e);
           }
-          return [...kids.entries()].map(([name, e]) => ({ name, dir: parent ? `${parent}/${name}` : name, count: e.count, hasChildren: e.deeper }));
+          // Mirrors Db::dirs: numbers count by value, so "Take 2" comes before "Take 10".
+          return [...kids.entries()]
+            .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+            .map(([name, e]) => ({ name, dir: parent ? `${parent}/${name}` : name, count: e.count, hasChildren: e.deeper }));
         }
         case "query_samples":
           return query(args.request as QueryRequest);
