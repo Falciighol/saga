@@ -2,6 +2,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { ChevronLeft, Download, Minus, Pause, Play, Plus, Repeat, RotateCcw, Square, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
+import { toggleLoop } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate } from "../lib/format";
 import { DEFAULT_EDIT, type Processing } from "../lib/processing";
@@ -11,8 +12,7 @@ import type { SampleRow } from "../lib/types";
 import { setupCanvas } from "../lib/waveform";
 import { useBrowse } from "../store/browse";
 import { useEditor, type Snap } from "../store/editor";
-import { playerPosition, shouldLoop, usePlayer } from "../store/player";
-import { usePrefs } from "../store/prefs";
+import { playerPosition, useLoopOn, usePlayer } from "../store/player";
 import { useEdit, useEdits, useProject } from "../store/project";
 import { toast } from "../store/toasts";
 import { Clock, DragTile, MetronomeIcon, PitchStepper, useElementWidth } from "./PreviewPanel";
@@ -267,7 +267,7 @@ function Stage({ row, processing }: { row: SampleRow; processing: Processing }) 
     // xOf depends on view/width, both listed.
   }, [width, duration, beat, view.start, view.end, span]);
 
-  const looping = usePrefs((p) => (row.kind === "loop" ? p.loopLoops : p.loopShots));
+  const looping = useLoopOn(row);
   const braceLeft = Math.max(0, xOf(rs));
   const braceRight = Math.min(width, xOf(re));
 
@@ -644,11 +644,10 @@ function Position({ row, processing }: { row: SampleRow; processing: Processing 
 function Transport({ row, processing }: { row: SampleRow; processing: Processing }) {
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const project = useProject();
-  const prefs = usePrefs();
   const view = useEditor((s) => s.view);
   const setView = useEditor((s) => s.setView);
   const duration = row.duration ?? 0;
-  const loopOn = shouldLoop(row);
+  const loopOn = useLoopOn(row);
   const playing = status === "playing" || status === "loading";
   const zoom = (factor: number) => {
     const cur = view ?? { start: 0, end: duration };
@@ -671,11 +670,7 @@ function Transport({ row, processing }: { row: SampleRow; processing: Processing
         label="Loop (L)"
         active={loopOn}
         aria-pressed={loopOn}
-        onClick={() => {
-          const next = !loopOn;
-          prefs.set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-          if (usePlayer.getState().id === row.id) usePlayer.getState().setLooping(next);
-        }}
+        onClick={() => toggleLoop(row)}
       >
         <Repeat size={16} strokeWidth={1.75} />
       </IconButton>

@@ -120,3 +120,10 @@ export function sourceHint(what: "Tempo" | "Key", source: string | null): string
       return undefined;
   }
 }
+
+/** A day as "2026-10-03" in local time, the way dates sort; "—" when unknown. */
+export function fmtDate(secs: number | null | undefined): string {
+  if (secs == null) return "—";
+  const d = new Date(secs * 1000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}

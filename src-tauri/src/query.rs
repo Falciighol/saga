@@ -290,6 +290,14 @@ pub fn build_where(p: &ParsedSearch, omit: Omit, now: i64) -> Where {
             params.push(Value::Real(hi));
         }
     }
+    if let Some(from) = f.created_from {
+        w.push("s.created >= ?".into());
+        params.push(Value::Integer(from));
+    }
+    if let Some(to) = f.created_to {
+        w.push("s.created < ?".into());
+        params.push(Value::Integer(to));
+    }
     if !f.formats.is_empty() {
         let mut exts: Vec<String> = Vec::new();
         for fmt in &f.formats {
@@ -360,7 +368,9 @@ pub fn order_by(sort: &str, desc: bool, has_text: bool, seed: i64, fit: Option<u
     match sort {
         "fit" if fit.is_some() => format!("scale_fit(s.features, {}) DESC NULLS LAST, s.name COLLATE NOCASE", fit.unwrap()),
         "name" => format!("s.name COLLATE NOCASE {dir}, s.id"),
-        "added" => format!("s.added_at {flip}, s.id {flip}"),
+        // Dates read newest first when descending, like the other columns.
+        "added" => format!("s.added_at {dir}, s.id {dir}"),
+        "created" => format!("s.created {dir} NULLS LAST, s.name COLLATE NOCASE"),
         "played" => format!("s.last_played {flip} NULLS LAST, s.play_count DESC"),
         "duration" => format!("s.duration {dir} NULLS LAST, s.name COLLATE NOCASE"),
         "bpm" => format!("s.bpm {dir} NULLS LAST, s.name COLLATE NOCASE"),

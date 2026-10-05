@@ -26,6 +26,9 @@ export interface AdvancedFilters {
   sampleRates: number[];
   tags: string[];
   excludeTags: string[];
+  /** Created from this time (seconds, included) to that one (not included). */
+  createdFrom: number | null;
+  createdTo: number | null;
 }
 
 export const EMPTY_FILTERS: AdvancedFilters = {
@@ -40,6 +43,8 @@ export const EMPTY_FILTERS: AdvancedFilters = {
   sampleRates: [],
   tags: [],
   excludeTags: [],
+  createdFrom: null,
+  createdTo: null,
 };
 
 export const PAGE_SIZE = 100;
@@ -91,6 +96,8 @@ interface BrowseState {
   selectIndex: (index: number, opts?: { play?: boolean }) => Promise<void>;
   selectRow: (row: SampleRow, index: number, opts?: { play?: boolean }) => void;
   move: (delta: number) => void;
+  /** The row at an index, fetching its page when it isn't loaded yet. */
+  loadRow: (index: number) => Promise<SampleRow | undefined>;
   rowAt: (index: number) => SampleRow | undefined;
   patchRow: (id: number, patch: Partial<SampleRow>) => void;
   /** Swaps in fresh copies of these rows wherever they're shown. */
@@ -154,10 +161,29 @@ export function backendFilters(s: Pick<BrowseState, "view" | "text" | "kind" | "
   return f;
 }
 
-function effectiveSort(s: Pick<BrowseState, "sort" | "view">): SortKey {
-  if (s.sort === "relevance" && s.view.type === "recent-played") return "played";
-  if (s.sort === "relevance" && s.view.type === "recent-added") return "added";
-  return s.sort;
+/** Which way a sort starts: dates newest first, everything else A to Z, low to high. */
+export function firstDesc(sort: SortKey): boolean {
+  return sort === "added" || sort === "created";
+}
+
+/** The sort the list shows: the recent views put the newest first until another sort is picked. */
+function listOrder(s: Pick<BrowseState, "sort" | "view" | "desc" | "seed">): { sort: SortKey; desc: boolean; seed: number } {
+  if (s.sort === "relevance" && s.view.type === "recent-played") return { sort: "played", desc: false, seed: s.seed };
+  if (s.sort === "relevance" && s.view.type === "recent-added") return { sort: "added", desc: true, seed: s.seed };
+  return { sort: s.sort, desc: s.desc, seed: s.seed };
+}
+
+/** These rows in the order the list shows them (rows it doesn't show go last, as they were), so
+ *  actions on several samples, like numbering them, follow what's on screen. */
+export async function inListOrder(rows: SampleRow[]): Promise<SampleRow[]> {
+  if (rows.length < 2) return rows;
+  const s = useBrowse.getState();
+  const ids = await api.queryIds(backendFilters(s), listOrder(s));
+  const at = new Map(ids.map((id, i) => [id, i]));
+  return rows
+    .map((row, i) => ({ row, i, at: at.get(row.id) ?? ids.length + i }))
+    .sort((a, b) => a.at - b.at)
+    .map((x) => x.row);
 }
 
 export function activeFilterCount(f: AdvancedFilters): number {
@@ -168,6 +194,7 @@ export function activeFilterCount(f: AdvancedFilters): number {
   if (f.formats.length) n++;
   if (f.channels) n++;
   if (f.sampleRates.length) n++;
+  if (f.createdFrom != null || f.createdTo != null) n++;
   n += f.tags.length + f.excludeTags.length;
   return n;
 }
@@ -187,14 +214,7 @@ export const useBrowse = create<BrowseState>((set, get) => {
     inflight.add(key);
     const { queryKey, version } = s;
     try {
-      const res = await api.query({
-        filters: backendFilters(s),
-        sort: effectiveSort(s),
-        desc: s.desc,
-        offset: page * PAGE_SIZE,
-        limit: PAGE_SIZE,
-        seed: s.seed,
-      });
+      const res = await api.query({ filters: backendFilters(s), ...listOrder(s), offset: page * PAGE_SIZE, limit: PAGE_SIZE });
       if (get().queryKey !== queryKey) return;
       set((cur) => {
         const selected = cur.selected ? (res.rows.find((r) => r.id === cur.selected!.id) ?? cur.selected) : null;
@@ -319,14 +339,17 @@ export const useBrowse = create<BrowseState>((set, get) => {
       if (play) usePlayer.getState().play(row);
     },
 
-    selectIndex: async (index, opts) => {
+    loadRow: async (index) => {
       const s = get();
-      if (s.total == null || index < 0 || index >= s.total) return;
-      let row = s.rowAt(index);
-      if (!row) {
-        await fetchPage(Math.floor(index / PAGE_SIZE));
-        row = get().rowAt(index);
-      }
+      if (s.total == null || index < 0 || index >= s.total) return undefined;
+      const row = s.rowAt(index);
+      if (row) return row;
+      await fetchPage(Math.floor(index / PAGE_SIZE));
+      return get().rowAt(index);
+    },
+
+    selectIndex: async (index, opts) => {
+      const row = await get().loadRow(index);
       if (row) get().selectRow(row, index, opts);
     },
 
@@ -398,7 +421,7 @@ export const useBrowse = create<BrowseState>((set, get) => {
       const s = get();
       const { queryKey } = s;
       try {
-        const ids = await api.queryIds(backendFilters(s));
+        const ids = await api.queryIds(backendFilters(s), listOrder(s));
         if (get().queryKey !== queryKey) return;
         set({ picked: ids.length > 1 ? new Set(ids) : new Set<number>() });
         if (!get().selected && ids.length) void get().selectIndex(0, { play: false });

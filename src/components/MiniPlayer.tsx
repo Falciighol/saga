@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Maximize2, Pause, Pin, Play, Repeat, Search, Star, X } from "lucide-react";
+import { ListEnd, Maximize2, Pause, Pin, Play, Repeat, Search, Star, X } from "lucide-react";
 import { forwardRef, memo, useEffect, useRef } from "react";
-import { dragOut, dragSample, sampleMenu } from "../lib/actions";
+import { dragOut, dragSample, sampleMenu, setPlayNext, toggleLoop } from "../lib/actions";
 import { bpmText, fmtCount, fmtLength, keyText } from "../lib/format";
 import { keyFilterLabel } from "../lib/keys";
 import { isMac, isWindows, modKey } from "../lib/platform";
@@ -9,13 +9,13 @@ import { useRender } from "../lib/renders";
 import type { SampleRow } from "../lib/types";
 import { useBrowse } from "../store/browse";
 import { useLibrary } from "../store/library";
-import { shouldLoop, usePlayer } from "../store/player";
+import { useLoopOn, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { useEdit, useEdits } from "../store/project";
 import { useUi } from "../store/ui";
 import { lengthLabel, tempoLabel } from "./FilterPanel";
 import { openContextMenu } from "./Menu";
-import { Clock, PitchStepper, ReverseIcon, useElementWidth } from "./PreviewPanel";
+import { Clock, PitchStepper, PLAY_NEXT_LABEL, ReverseIcon, useElementWidth } from "./PreviewPanel";
 import { KeyControl, SyncSwitch, TempoControl } from "./ProjectControls";
 import { cx, IconButton, Kbd } from "./ui";
 import { MiniWave } from "./Waveforms";
@@ -245,8 +245,8 @@ function PreviewWave({ row, reverse }: { row: SampleRow; reverse: boolean }) {
 function MiniPreview() {
   const row = useBrowse((s) => s.selected);
   const status = usePlayer((s) => (row && s.id === row.id ? s.status : "idle"));
-  const loopLoops = usePrefs((s) => s.loopLoops);
-  const loopShots = usePrefs((s) => s.loopShots);
+  const loopOn = useLoopOn(row);
+  const playNext = usePrefs((s) => s.playNext);
   const edit = useEdit(row?.id);
   const update = useEdits((s) => s.update);
   const { processing } = useRender(row);
@@ -258,7 +258,6 @@ function MiniPreview() {
     );
   }
   const playing = status === "playing" || status === "loading";
-  const loopOn = row.kind === "loop" ? loopLoops : loopShots;
   return (
     <section aria-label="Preview" className="flex shrink-0 flex-col gap-2.5 border-t border-line bg-panel p-3.5">
       <div className="flex min-w-0 items-baseline gap-2">
@@ -282,13 +281,12 @@ function MiniPreview() {
           size={30}
           active={loopOn}
           aria-pressed={loopOn}
-          onClick={() => {
-            const next = !shouldLoop(row);
-            usePrefs.getState().set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-            if (usePlayer.getState().id === row.id) usePlayer.getState().setLooping(next);
-          }}
+          onClick={() => toggleLoop(row)}
         >
           <Repeat size={15} strokeWidth={1.75} />
+        </IconButton>
+        <IconButton label={PLAY_NEXT_LABEL} size={30} active={playNext} aria-pressed={playNext} onClick={() => setPlayNext(!playNext)}>
+          <ListEnd size={15} strokeWidth={1.75} />
         </IconButton>
         <IconButton label="Reverse (R)" size={30} active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
           <ReverseIcon size={15} />

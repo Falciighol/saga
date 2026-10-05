@@ -2,7 +2,9 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { MonoChoice, SansChoice } from "../lib/fonts";
 import type { Accent, ThemePref } from "../lib/theme";
+import type { ColumnPref } from "../lib/listColumns";
 import type { RenamePattern } from "../lib/rename";
+import type { SavedPreset } from "../lib/renamePresets";
 import type { Aspect } from "../lib/types";
 
 export type MapColor = "category" | "brightness" | "loudness";
@@ -27,6 +29,8 @@ export interface PrefValues {
   volume: number;
   /** Play a sample as soon as it's selected. */
   autoplay: boolean;
+  /** When a sample ends, play the next one in the list. Everything plays once while this is on. */
+  playNext: boolean;
   /** Loop loops while previewing. */
   loopLoops: boolean;
   /** Loop one-shots while previewing. */
@@ -46,6 +50,10 @@ export interface PrefValues {
   bpmFixed: boolean;
   /** The last rename pattern, so batch renames can be repeated. */
   renamePattern: RenamePattern | null;
+  /** Rename patterns saved under names of the user's own, listed after the built-in presets. */
+  renamePresets: SavedPreset[];
+  /** The sample list's columns in the user's order, and which show; null for the usual ones. */
+  listColumns: ColumnPref[] | null;
 }
 
 interface Prefs extends PrefValues {
@@ -63,6 +71,7 @@ export const DEFAULT_PREFS: PrefValues = {
   sidebarWidth: 232,
   volume: 0.8,
   autoplay: true,
+  playNext: false,
   loopLoops: true,
   loopShots: false,
   mapColor: "category",
@@ -74,6 +83,8 @@ export const DEFAULT_PREFS: PrefValues = {
   autoUpdate: true,
   bpmFixed: false,
   renamePattern: null,
+  renamePresets: [],
+  listColumns: null,
 };
 
 export const usePrefs = create<Prefs>()(

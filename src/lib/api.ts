@@ -26,6 +26,7 @@ import type {
   SampleRow,
   SavedSounds,
   SimilarResult,
+  SortKey,
   SourceInfo,
   Subfolder,
   SuggestedFolder,
@@ -81,7 +82,8 @@ export const api = {
   /** Rows for these ids, in the same order; ones no longer in the library are left out. */
   samples: (ids: number[]) => invoke<SampleRow[]>("get_samples", { ids }),
   /** Ids of every sample the filters match. */
-  queryIds: (filters: Filters) => invoke<number[]>("query_ids", { filters }),
+  /** Ids of every sample the filters match; given the list's sort, in the order the list shows them. */
+  queryIds: (filters: Filters, order?: { sort: SortKey; desc: boolean; seed: number }) => invoke<number[]>("query_ids", { filters, ...order }),
   stats: () => invoke<LibraryStats>("library_stats"),
   progress: () => invoke<IndexProgress>("index_progress"),
 

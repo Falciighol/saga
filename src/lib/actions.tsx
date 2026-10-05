@@ -8,7 +8,9 @@ import { SimilarIcon } from "../components/ViewToggle";
 import { targetIds, targetRows, useBrowse } from "../store/browse";
 import { useLab } from "../store/lab";
 import { useLibrary } from "../store/library";
-import { usePlayer } from "../store/player";
+import { useEditor } from "../store/editor";
+import { shouldLoop, usePlayer } from "../store/player";
+import { usePrefs } from "../store/prefs";
 import { useSimilar } from "../store/similar";
 import { useUi } from "../store/ui";
 import { toast } from "../store/toasts";
@@ -159,7 +161,7 @@ export function tempoSubmenu(ids: number[], rows: SampleRow[] = []): MenuItem[] 
 export async function renameTargets() {
   try {
     const rows = await targetRows();
-    if (rows.length) useRename.getState().open(rows);
+    if (rows.length) await useRename.getState().open(rows);
   } catch (e) {
     toast(errorMessage(e));
   }
@@ -204,6 +206,52 @@ export function pickedMenu(): MenuItem[] {
 }
 
 // ---- common sample actions ----
+
+/** Turns looping on or off for this kind of sample (loops or one-shots). Turning it on stops Play next,
+ *  which would otherwise keep the sample from repeating. */
+export function toggleLoop(row: SampleRow) {
+  const next = !shouldLoop(row);
+  usePrefs.getState().set({ ...(row.kind === "loop" ? { loopLoops: next } : { loopShots: next }), ...(next ? { playNext: false } : {}) });
+  const player = usePlayer.getState();
+  if (player.id === row.id) player.setLooping(next);
+}
+
+/** Turns Play next on or off. A loop that's repeating now plays to its end and moves on. */
+export function setPlayNext(on: boolean) {
+  usePrefs.getState().set({ playNext: on });
+  const player = usePlayer.getState();
+  if (player.row && player.status !== "idle") player.setLooping(shouldLoop(player.row));
+}
+
+/** Rows to look past for one whose drive is connected before giving up. */
+const NEXT_LOOKAHEAD = 200;
+
+/** With Play next on, plays the sample after the one that just ended: the next row of the list, or of
+ *  Similar sounds on the map. Does nothing when you've since selected another sample or opened the editor. */
+export async function playNextAfter(id: number | null) {
+  if (!usePrefs.getState().playNext || id == null || usePlayer.getState().id !== id || useEditor.getState().openId != null) return;
+  const ui = useUi.getState();
+  if (ui.view === "map" && !ui.mini) {
+    const similar = useSimilar.getState();
+    if (similar.items[similar.index]?.row.id !== id) return;
+    const next = similar.items.findIndex((x, i) => i > similar.index && x.row.online);
+    if (next >= 0) similar.select(next, { play: true });
+    return;
+  }
+  const browse = useBrowse.getState();
+  if (browse.selected?.id !== id || browse.total == null) return;
+  const from = browse.selectedIndex;
+  for (let i = from + 1; i < Math.min(browse.total, from + 1 + NEXT_LOOKAHEAD); i++) {
+    const row = await browse.loadRow(i);
+    // Something else was played or selected while the next page loaded.
+    if (useBrowse.getState().selected?.id !== id || usePlayer.getState().id !== id) return;
+    if (!row) return;
+    if (row.online) {
+      useBrowse.getState().selectRow(row, i, { play: true });
+      return;
+    }
+  }
+}
 
 /** Opens a Lab tool on this sample: the key finder, or the tuner for a one-shot. */
 export function openInLab(row: SampleRow, index: number, tool: "finder" | "tempo") {

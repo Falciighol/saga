@@ -121,11 +121,14 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("user_bpm", "REAL"),
     ("user_key_pc", "INTEGER"),
     ("user_key_mode", "INTEGER"),
+    // When the file was created (seconds since 1970), or last changed where the drive doesn't
+    // keep a created time. Filled by scans, which also fill it for files indexed before it existed.
+    ("created", "INTEGER"),
 ];
 
 const ROW_COLS: &str = "s.id, s.source_id, s.path, s.name, s.ext, s.dir, src.name, s.duration, s.sample_rate, \
     s.channels, s.bit_depth, s.bpm, s.bpm_source, s.key_pc, s.key_mode, s.kind, s.category, s.auto_tags, \
-    s.user_tags, s.peak_db, s.loudness, s.peaks, s.status, s.favorite, src.online, s.play_count, s.key_source";
+    s.user_tags, s.peak_db, s.loudness, s.peaks, s.status, s.favorite, src.online, s.play_count, s.key_source, s.created, s.added_at";
 
 /// Matches the file at path `?2` and every file in the folder `?3`, which is that same path relative
 /// to its source ('' for the source itself). Folders are compared through `dir`, which is
@@ -203,6 +206,8 @@ fn row_to_sample(r: &Row) -> rusqlite::Result<SampleRow> {
         favorite: r.get::<_, i64>(23)? == 1,
         online: r.get::<_, i64>(24)? == 1,
         play_count: r.get(25)?,
+        created: r.get(27)?,
+        added: r.get(28)?,
     })
 }
 
@@ -281,6 +286,8 @@ pub struct ScannedFile {
     pub ext: String,
     pub size: i64,
     pub mtime: i64,
+    /// When the file was created, as stored in `created`.
+    pub created: Option<i64>,
     pub existing: Option<i64>,
 }
 
@@ -459,11 +466,13 @@ impl Db {
 
     /// Files already indexed for a source, optionally limited to one path and everything under it:
     /// the path as stored, and the same path relative to the source (`/`-separated).
-    pub fn files_under(&self, source_id: i64, under: Option<(&str, &str)>) -> DbResult<HashMap<String, (i64, i64, i64)>> {
+    /// Every indexed file of a source (or under one of its folders): path → (id, size, mtime,
+    /// whether its created time is stored).
+    pub fn files_under(&self, source_id: i64, under: Option<(&str, &str)>) -> DbResult<HashMap<String, (i64, i64, i64, bool)>> {
         let conn = self.read.lock();
         let mut out = HashMap::new();
         let mut collect = |stmt: &mut rusqlite::Statement, p: &[&dyn rusqlite::ToSql]| -> DbResult<()> {
-            let rows = stmt.query_map(p, |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))?;
+            let rows = stmt.query_map(p, |r| Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get::<_, Option<i64>>(4)?.is_some()))))?;
             for row in rows {
                 let (path, v) = row?;
                 out.insert(path, v);
@@ -472,11 +481,11 @@ impl Db {
         };
         match under {
             Some((path, rel)) => {
-                let mut stmt = conn.prepare(&format!("SELECT path, id, size, mtime FROM samples WHERE source_id = ?1 AND {UNDER}"))?;
+                let mut stmt = conn.prepare(&format!("SELECT path, id, size, mtime, created FROM samples WHERE source_id = ?1 AND {UNDER}"))?;
                 collect(&mut stmt, &[&source_id, &path, &rel])?;
             }
             None => {
-                let mut stmt = conn.prepare("SELECT path, id, size, mtime FROM samples WHERE source_id = ?1")?;
+                let mut stmt = conn.prepare("SELECT path, id, size, mtime, created FROM samples WHERE source_id = ?1")?;
                 collect(&mut stmt, &[&source_id])?;
             }
         }
@@ -490,11 +499,11 @@ impl Db {
         {
             let mut insert = tx.prepare(
                 "INSERT INTO samples(source_id, path, dir, name, ext, size, mtime, bpm, bpm_source, key_pc, key_mode, key_source, \
-                 kind, category, auto_tags, status, added_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+                 kind, category, auto_tags, status, added_at, created) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
             )?;
             let mut update = tx.prepare(
                 "UPDATE samples SET size = ?, mtime = ?, bpm = ?, bpm_source = ?, key_pc = ?, key_mode = ?, key_source = ?, \
-                 kind = ?, category = ?, auto_tags = ?, status = 0 WHERE id = ?",
+                 kind = ?, category = ?, auto_tags = ?, status = 0, created = COALESCE(?, created) WHERE id = ?",
             )?;
             let mut fts_del = tx.prepare("DELETE FROM samples_fts WHERE rowid = ?")?;
             let mut fts_ins = tx.prepare("INSERT INTO samples_fts(rowid, text) VALUES(?, ?)")?;
@@ -514,7 +523,7 @@ impl Db {
                     Some(id) => {
                         update.execute(params![
                             f.size, f.mtime, r.bpm, r.bpm_source as i64, kpc, kmode, r.key_source as i64, r.kind as i64,
-                            r.category, tags, id
+                            r.category, tags, f.created, id
                         ])?;
                         fts_del.execute([id])?;
                         id
@@ -522,7 +531,7 @@ impl Db {
                     None => {
                         insert.execute(params![
                             source_id, f.path, f.dir, f.name, f.ext, f.size, f.mtime, r.bpm, r.bpm_source as i64, kpc,
-                            kmode, r.key_source as i64, r.kind as i64, r.category, tags, added
+                            kmode, r.key_source as i64, r.kind as i64, r.category, tags, added, f.created
                         ])?;
                         tx.last_insert_rowid()
                     }
@@ -761,11 +770,17 @@ impl Db {
     }
 
     /// Ids of every sample the filters match.
-    pub fn matching_ids(&self, filters: &Filters) -> DbResult<Vec<i64>> {
+    /// Ids of every sample the filters match. With `order` (sort, descending, seed, as in a
+    /// `QueryRequest`) they come in the list's order; without it, in no particular order.
+    pub fn matching_ids(&self, filters: &Filters, order: Option<(&str, bool, i64)>) -> DbResult<Vec<i64>> {
         let parsed = query::parse_search(filters);
         let w = query::build_where(&parsed, Omit::Nothing, now());
+        let order = match order {
+            Some((sort, desc, seed)) => format!(" ORDER BY {}", query::order_by(sort, desc, w.has_text, seed, query::fit_mask(&parsed.filters))),
+            None => String::new(),
+        };
         let conn = self.read.lock();
-        let mut stmt = conn.prepare(&format!("SELECT s.id FROM samples s {} WHERE {}", w.join, w.clause))?;
+        let mut stmt = conn.prepare(&format!("SELECT s.id FROM samples s {} WHERE {}{order}", w.join, w.clause))?;
         let rows = stmt.query_map(params_from_iter(w.params.iter()), |r| r.get(0))?;
         rows.collect()
     }
@@ -1024,16 +1039,56 @@ impl Db {
 
     /// Points a sample at its file's new name in the same folder, keeping its id and so its
     /// favorite, tags, collections and edits.
+    #[cfg(test)]
     pub fn rename_sample(&self, id: i64, path: &str, name: &str) -> DbResult<()> {
+        self.rename_samples(&[(id, path.to_string(), name.to_string())])
+    }
+
+    /// Points samples at their files' new names (`(id, path, name)`), all at once. Samples can
+    /// trade names (A takes B's while B takes C's), so every one lets go of its old path before
+    /// any takes a new one.
+    pub fn rename_samples(&self, renames: &[(i64, String, String)]) -> DbResult<()> {
+        if renames.is_empty() {
+            return Ok(());
+        }
         let mut conn = self.write.lock();
         let tx = conn.transaction()?;
-        // A row left over for a file that's gone would hold the path.
-        tx.execute("DELETE FROM samples WHERE path = ?1 AND id != ?2", params![path, id])?;
-        tx.execute("UPDATE samples SET path = ?, name = ? WHERE id = ?", params![path, name, id])?;
-        refresh_fts(&tx, id)?;
+        for (id, _, _) in renames {
+            // Unique and never a real path, so the UNIQUE path index doesn't trip half-way.
+            tx.execute("UPDATE samples SET path = char(0) || 'renaming:' || id WHERE id = ?", [id])?;
+        }
+        for (id, path, name) in renames {
+            // A row left over for a file that's gone would hold the path.
+            tx.execute("DELETE FROM samples WHERE path = ?1 AND id != ?2", params![path, id])?;
+            tx.execute("UPDATE samples SET path = ?, name = ? WHERE id = ?", params![path, name, id])?;
+            refresh_fts(&tx, *id)?;
+        }
         tx.commit()?;
         self.changed();
         Ok(())
+    }
+
+    /// Stores created times (`(id, seconds)`) for files indexed before Saga kept them.
+    pub fn set_created(&self, dates: &[(i64, i64)]) -> DbResult<()> {
+        if dates.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE samples SET created = ? WHERE id = ?")?;
+            for (id, created) in dates {
+                stmt.execute(params![created, id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets every created time, like a library indexed before Saga kept them.
+    #[cfg(test)]
+    pub fn forget_created(&self) {
+        self.write.lock().execute("UPDATE samples SET created = NULL", []).unwrap();
     }
 
     /// Every folder (relative, `/`-separated) of a source that holds samples.
@@ -1126,6 +1181,7 @@ mod tests {
             ext: "wav".into(),
             size: 100,
             mtime: 1,
+            created: Some(1_700_000_000),
             existing: None,
         }
     }
@@ -1362,6 +1418,7 @@ mod tests {
                     ext: "wav".into(),
                     size: 100,
                     mtime: 1,
+                    created: None,
                     existing: None,
                 }
             };

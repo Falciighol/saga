@@ -2,7 +2,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { FolderMinus, FolderOpen, FolderPen, FolderPlus, HardDrive, Heart, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { openLink, reveal } from "../lib/actions";
+import { openLink, reveal, setPlayNext } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { MONO_FONTS, MONO_ORDER, SANS_FONTS, SANS_ORDER } from "../lib/fonts";
 import { fmtBytes, fmtCount } from "../lib/format";
@@ -163,7 +163,7 @@ function SupportSection() {
 }
 
 /** What Reset puts back: everything Settings changes, and nothing in the library. */
-const RESETTABLE: (keyof PrefValues)[] = ["theme", "accent", "sansFont", "sansInstalled", "monoFont", "monoInstalled", "uiScale", "bpmFixed", "autoplay", "loopLoops", "loopShots", "miniOnTop", "autoUpdate"];
+const RESETTABLE: (keyof PrefValues)[] = ["theme", "accent", "sansFont", "sansInstalled", "monoFont", "monoInstalled", "uiScale", "bpmFixed", "autoplay", "playNext", "loopLoops", "loopShots", "miniOnTop", "autoUpdate"];
 
 function resetSettings() {
   useConfirm.getState().ask({
@@ -534,6 +534,9 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
               <SectionLabel className="pb-1">Playback</SectionLabel>
               <Row label="Play on select" hint="Preview a sample as soon as you select it.">
                 <Switch checked={prefs.autoplay} onChange={(v) => prefs.set({ autoplay: v })} />
+              </Row>
+              <Row label="Play next" hint="When a sample ends, the next one in the list plays. Loops play once while this is on.">
+                <Switch checked={prefs.playNext} onChange={setPlayNext} />
               </Row>
               <Row label="Loop loops" hint="Loops repeat until you stop them.">
                 <Switch checked={prefs.loopLoops} onChange={(v) => prefs.set({ loopLoops: v })} />

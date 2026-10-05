@@ -11,7 +11,7 @@ paths:
 ## Structure
 - `src/components/`: one main component per file, PascalCase, plus small private helpers in the
   same file. Lab UI lives in `components/lab/`. Shared primitives are in `components/ui.tsx`
-  (`cx`, `Switch`, `Segmented`, `IconButton`, `SectionLabel`, `Divider`, `Kbd`), and `Popover.tsx`,
+  (`cx`, `Switch`, `Segmented`, `Chip`, `IconButton`, `SectionLabel`, `Divider`, `Kbd`), and `Popover.tsx`,
   `Menu.tsx` (`openContextMenu`, `openMenuBelow`) and `Prompt.tsx` (`usePrompt`, confirm) cover
   overlays. Use these before writing a new button, toggle, menu or modal.
 - `src/store/`: one Zustand store per domain (`useX = create<XState>(…)`). Cross-store reads use

@@ -35,7 +35,7 @@ component / store
 | --- | --- | --- | --- | --- |
 | `index-progress` | `indexer.rs` via the `Emit` callback | `IndexProgress` | `App.tsx` → `useLibrary.setProgress` | sidebar "Listening to your samples" |
 | `library-changed` | `indexer.rs` | none | `App.tsx` | `useLibrary.refresh()` + `useBrowse.refresh()` + `useSimilar.refreshIfWaiting()` |
-| `playback` | `audio.rs` engine → `lib.rs` | `PlaybackEvent` | `usePlayer.handleEvent` | position anchor, ended, errors |
+| `playback` | `audio.rs` engine → `lib.rs` | `PlaybackEvent` | `usePlayer.handleEvent`, then `playNextAfter` (lib/actions) on `ended` | position anchor, ended, errors, Play next |
 | `record-level` | `commands.rs` (`start_recording`) | `RecordLevel` | `useSimilar.onLevel` | Find by recording meter |
 | `lab-transport` | `audio.rs`/`sequence.rs` → `lib.rs` | `TransportEvent` | `onTransport` in `store/lab.ts` | progression playhead |
 
@@ -85,6 +85,7 @@ mock, all together.
 | `prefs.theme` / `accent` | `applyPalette` writes CSS variables on `:root`, `usePalette()` serves canvas drawing |
 | `prefs.sansFont` / `monoFont` | `applyFonts` sets `--sans` / `--mono` |
 | `prefs.volume` | `api.setVolume` (also sent once at startup in `App.tsx`) |
+| `prefs.playNext` (via `setPlayNext`) | `shouldLoop` returns false for everything, and a repeating sample is told to stop looping. `toggleLoop` turning looping on turns it off |
 | `findSimilar(row)` (actions) | leaves the mini player, `setView("map")`, `useSimilar.find(row)` |
 | `openInLab(row, …)` (actions) | selects the row, leaves the mini player, sets the Lab tool, `setView("lab")` |
 | `applyValues` (key/tempo by hand) | `api.setSampleValues` → `useBrowse.replaceRows` + `refresh()` (facets count keys) |
@@ -105,7 +106,7 @@ whether an action applies to the picked set or the selected row. `editFor` / `us
 | `theory.ts` `scaleFit`, `fittingKeys`, key profiles | `keys.rs` `scale_fit`, `fitting_keys`, `detect.rs` profiles | scale fit, key finding |
 | `mockBackend.ts` `MIN_SCALE_FIT` | `keys.rs` `MIN_SCALE_FIT` | the threshold for notes that fit |
 | `soundmap.ts` group order | `sounds.rs` `group_of`, `OTHER_GROUP` | map color groups |
-| `rename.ts` `validName` | `commands.rs` `valid_name` | allowed file names |
+| `rename.ts` `nameProblem` | `rename.rs` `valid_name` | allowed file names |
 | `keys.ts` names, Camelot, compatibility | `keys.rs` | key spelling and Camelot codes |
 | `browse.ts` `backendFilters()` | `lib.rs` `ipc_tests::ui_filters` | the filters JSON shape |
 | `progressions.ts` | `sequence.rs`, `midi.rs` | a progression as played and as a MIDI clip |
@@ -136,3 +137,7 @@ mixer thread, `crossbeam` command channel, emits `playback` / `lab-transport`), 
 cached `SoundIndex` and map `Layouts` (rebuilt when `Db::changes()` moves). Commands borrow
 `State<'_, AppState>` and are all `async`. Blocking file or decode work goes in
 `tauri::async_runtime::spawn_blocking`.
+
+`rename_samples` holds `Indexer::hold_rescans()` while it moves files (old name → temporary name →
+new name, then one DB transaction). The scan thread waits on it, so the folder watcher never rescans
+a file halfway and drops its row. Anything else that moves a user's files must do the same.

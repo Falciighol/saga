@@ -43,14 +43,20 @@ named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem M
 - **Instant search** over names, folders, categories and tags, plus [field syntax](#search-syntax)
   like `bpm:120-128 key:Am+ is:loop`.
 - **Filters** for one-shot or loop, category, tempo (with half and double time), key with Camelot
-  compatibility, length, channels, format, sample rate and tags. Histograms show how your library
-  is spread before you pick a range.
+  compatibility, length, channels, format, sample rate, tags and the date a file was created
+  (today, the last 7 or 30 days, this year, or any range of days). Histograms show how your
+  library is spread before you pick a range.
+- **Columns your way.** Right-click the list's header (or use the button at its end) to show or
+  hide columns: date created, date added, format, sample rate, bit depth, channels, loudness and
+  times played join the usual ones. Drag a column's title to move it, and click it to sort; dates
+  sort newest first.
 - **Organize** with favorites, collections (right-click a sample, or drop samples on a
   collection; `⌫` takes them out again) and your own tags.
 - **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
   tempo, rename them, favorite or collect them, or drag them all into your DAW at once.
 - **Audition** by selecting: loops repeat, click the waveform to seek, and choose the output
-  device in Settings. Playback has click-free fades.
+  device in Settings. Playback has click-free fades. Turn on **Play next** to hear the list
+  through: when a sample ends, the next one plays, and loops play once.
 
 ![The filter panel: tempo and length histograms with range sliders, a Camelot key wheel, audio format options and tags](docs/screenshots/filters.webp)
 
@@ -76,11 +82,20 @@ turn on **Tempos with two decimals** in Settings.
 ### Rename files with their key and tempo
 
 Select samples and choose **Rename…** to write what Saga knows into the file names. Build the new
-name from tokens (the current name, key, BPM, date created, category) and any text, or pick a
-preset like `{name}_{bpm}_{key}`. Click a token again to take it out, or **Clear** to start over. Choose how keys are written (`F#m`, `F#min`, `F# minor` or
-Camelot `11A`), optionally as their relative major (`F#m` becomes `A`), and whether tempos are
-rounded. Values a name already has are left out, so `Loop_124_Am` doesn't become
-`Loop_124_Am_124_Am`. A preview shows every new name and any clash before anything changes.
+name from tokens (the current name, folder, collection, number, key, BPM, date created, category)
+and any text, or pick a preset like `{name}_{bpm}_{key}`. Click a token again to take it out, or **Clear** to start over.
+Choose how keys are written (`F#m`, `F#min`, `F# Min`, `F# minor` or Camelot `11A`), optionally as
+their relative major (`F#m` becomes `A`), whether tempos are rounded, and whether they're followed
+by `BPM`. **Save as preset…** keeps a pattern with all its choices under your own name, so
+`File Name_C Maj_120 BPM_2026-01-01` is one click away next time. Values a name already has are
+left out, so `Loop_124_Am` doesn't become `Loop_124_Am_124_Am`. A preview shows every new name and
+any clash before anything changes.
+
+To tidy a folder of mismatched names, open it, select everything and use **Folder name and number**
+(`{folder} {n}`): `Hip Hop Drums 1`, `Hip Hop Drums 2` and so on, in the order the list shows. From a
+collection, `{collection} {n}` does the same with the collection's name. Numbers can start anywhere,
+be padded (`01`, `001`) and count across the whole selection or start again in each folder. Files
+can trade names, so numbering a folder again just works.
 
 Files are renamed where they are, along with Ableton's `.asd` analysis file next to them, and keep
 their favorites, tags and collections. **Undo** puts the old names back. DAW projects that already

@@ -1,7 +1,7 @@
-import { FolderPlus, FolderSearch, Minus, Pause, Play, Plus, Repeat, SlidersHorizontal, Star, Volume2, X } from "lucide-react";
+import { FolderPlus, FolderSearch, ListEnd, Minus, Pause, Play, Plus, Repeat, SlidersHorizontal, Star, Volume2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePalette } from "../hooks/useTheme";
-import { collectionSubmenu, dragOut, dragSample, findSimilar, keySubmenu, reveal, tempoSubmenu } from "../lib/actions";
+import { collectionSubmenu, dragOut, dragSample, findSimilar, keySubmenu, reveal, setPlayNext, tempoSubmenu, toggleLoop } from "../lib/actions";
 import { api, errorMessage } from "../lib/api";
 import { barsCount, ESTIMATE, fmtBpm, fmtChannels, fmtClock, fmtDb, fmtRate, hasTempo, sourceHint } from "../lib/format";
 import { revealLabel } from "../lib/platform";
@@ -13,7 +13,7 @@ import type { SampleRow } from "../lib/types";
 import { decodePeaks, setupCanvas, toBars } from "../lib/waveform";
 import { useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
-import { playerPosition, shouldLoop, timelinePosition, usePlayer } from "../store/player";
+import { playerPosition, shouldLoop, timelinePosition, useLoopOn, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { pitchStep, stepPitch, useEdit, useEdits, useProject } from "../store/project";
 import { toast } from "../store/toasts";
@@ -51,6 +51,9 @@ export function MetronomeIcon({ size = 16 }: { size?: number }) {
   );
 }
 
+/** Label of the Play next buttons here and in the mini player. */
+export const PLAY_NEXT_LABEL = "Play the next sample when one ends";
+
 /** The waveform as you hear it: reversed when reversing, with the loop region highlighted. */
 function BigWaveform({ row, processing }: { row: SampleRow; processing: Processing }) {
   const [box, width] = useElementWidth<HTMLDivElement>();
@@ -60,7 +63,7 @@ function BigWaveform({ row, processing }: { row: SampleRow; processing: Processi
   const colors = usePalette();
   const ratio = usePixelRatio();
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
-  const looping = usePrefs((p) => (row.kind === "loop" ? p.loopLoops : p.loopShots));
+  const looping = useLoopOn(row);
   const height = 96;
   const step = 3;
   const duration = row.duration ?? 0;
@@ -473,12 +476,6 @@ export function PreviewPanel() {
     bars ? `${bars} ${bars === 1 ? "bar" : "bars"}` : "",
   ].filter(Boolean);
 
-  const toggleLoop = () => {
-    const next = !loopOn;
-    prefs.set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-    if (usePlayer.getState().id === row.id) usePlayer.getState().setLooping(next);
-  };
-
   return (
     <section aria-label="Preview" className="@container/preview flex h-[264px] shrink-0 flex-col gap-3 border-t border-line bg-panel px-4 pt-4 pb-3.5">
       <div className="flex h-10 shrink-0 items-center gap-2">
@@ -555,8 +552,11 @@ export function PreviewPanel() {
           {playing ? <Pause size={14} fill="currentColor" strokeWidth={0} /> : <Play size={14} fill="currentColor" strokeWidth={0} className="translate-x-px" />}
         </button>
         <div className="flex gap-1">
-          <IconButton label={row.kind === "loop" ? "Loop loops (L)" : "Loop one-shots (L)"} active={loopOn} aria-pressed={loopOn} onClick={toggleLoop}>
+          <IconButton label={row.kind === "loop" ? "Loop loops (L)" : "Loop one-shots (L)"} active={loopOn} aria-pressed={loopOn} onClick={() => toggleLoop(row)}>
             <Repeat size={16} strokeWidth={1.75} />
+          </IconButton>
+          <IconButton label={PLAY_NEXT_LABEL} active={prefs.playNext} aria-pressed={prefs.playNext} onClick={() => setPlayNext(!prefs.playNext)}>
+            <ListEnd size={16} strokeWidth={1.75} />
           </IconButton>
           <IconButton label="Reverse (R)" active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
             <ReverseIcon />

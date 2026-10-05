@@ -2,24 +2,42 @@ import { ArrowRight, ChevronDown, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { create } from "zustand";
 import { api, errorMessage } from "../lib/api";
-import { DEFAULT_PATTERN, planRenames, PRESETS, removeToken, TOKENS, type DateStyle, type KeyStyle, type RenamePattern } from "../lib/rename";
+import { DEFAULT_PATTERN, planRenames, removeToken, usesToken, type RenamePattern } from "../lib/rename";
+import { presetMenu } from "../lib/renamePresets";
+import { TOKENS } from "../lib/renameTokens";
 import type { SampleRow } from "../lib/types";
-import { useBrowse } from "../store/browse";
+import { inListOrder, useBrowse } from "../store/browse";
+import { useLibrary } from "../store/library";
 import { usePrefs } from "../store/prefs";
 import { toast } from "../store/toasts";
 import { openMenuBelow } from "./Menu";
-import { cx, IconButton, SectionLabel, Segmented, Switch } from "./ui";
+import { RenameStyles } from "./RenameStyles";
+import { cx, IconButton, SectionLabel } from "./ui";
 
 interface RenameState {
+  /** The samples to rename, in the order the list shows them ({n} counts in it). */
   rows: SampleRow[] | null;
-  open: (rows: SampleRow[]) => void;
+  /** The collection they were picked in, for {collection}; null anywhere else. */
+  collection: string | null;
+  open: (rows: SampleRow[]) => Promise<void>;
   close: () => void;
 }
 
 export const useRename = create<RenameState>((set) => ({
   rows: null,
-  open: (rows) => set({ rows }),
-  close: () => set({ rows: null }),
+  collection: null,
+  open: async (rows) => {
+    const view = useBrowse.getState().view;
+    const collection = view.type === "collection" ? (useLibrary.getState().collections.find((c) => c.id === view.id)?.name ?? null) : null;
+    let ordered = rows;
+    try {
+      ordered = await inListOrder(rows);
+    } catch {
+      /* numbered in the order they were picked */
+    }
+    set({ rows: ordered, collection });
+  },
+  close: () => set({ rows: null, collection: null }),
 }));
 
 /** Most rows the preview lists; the rest are counted. */
@@ -64,11 +82,12 @@ async function run(renames: { id: number; name: string }[], undo: boolean) {
 
 export function RenameHost() {
   const rows = useRename((s) => s.rows);
+  const collection = useRename((s) => s.collection);
   if (!rows) return null;
-  return <RenameDialog key={rows.map((r) => r.id).join(",")} rows={rows} />;
+  return <RenameDialog key={rows.map((r) => r.id).join(",")} rows={rows} collection={collection} />;
 }
 
-function RenameDialog({ rows }: { rows: SampleRow[] }) {
+function RenameDialog({ rows, collection }: { rows: SampleRow[]; collection: string | null }) {
   const close = useRename((s) => s.close);
   const saved = usePrefs((s) => s.renamePattern);
   const single = rows.length === 1;
@@ -94,11 +113,13 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
     requestAnimationFrame(() => input.current?.select());
   }, []);
 
-  const plans = useMemo(() => planRenames(rows, dates ?? new Map(), p), [rows, dates, p]);
+  const info = useMemo(() => ({ created: dates ?? new Map<number, number | null>(), collection }), [dates, collection]);
+  const plans = useMemo(() => planRenames(rows, p, info), [rows, p, info]);
   const ready = plans.filter((x) => !x.problem && !x.unchanged);
   const problems = plans.filter((x) => x.problem).length;
+  const clashes = plans.some((x) => x.problem === "Same name as another file here");
   const unchanged = plans.filter((x) => x.unchanged).length;
-  const uses = (token: string) => p.template.toLowerCase().includes(token);
+  const uses = (id: string) => usesToken(p.template, id);
 
   const insert = (token: string) => {
     const el = input.current;
@@ -112,7 +133,7 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
     });
   };
 
-  /** Puts the cursor back at the end of the name after a tag is taken out or the name cleared. */
+  /** Puts the cursor back at the end of the name after a tag is taken out, added or the name cleared. */
   const replace = (template: string) => {
     set({ template });
     requestAnimationFrame(() => {
@@ -121,16 +142,15 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
     });
   };
 
+  /** Ends the name with {n}, so files that would share a name each get their own. */
+  const addNumber = () => replace(`${p.template}${/[\s_\-.,]$/.test(p.template) || !p.template ? "" : " "}{n}`);
+
   const submit = async () => {
     if (!ready.length || busy) return;
     setBusy(true);
-    if (!single) {
-      const { template, keyStyle, relativeMajor, bpmWhole, dateStyle, skipExisting } = p;
-      usePrefs.getState().set({ renamePattern: { template, keyStyle, relativeMajor, bpmWhole, dateStyle, skipExisting } });
-    } else {
-      // Keep the styles a single rename chose, but not its typed name.
-      usePrefs.getState().set({ renamePattern: { ...(saved ?? DEFAULT_PATTERN), keyStyle: p.keyStyle, relativeMajor: p.relativeMajor, bpmWhole: p.bpmWhole, dateStyle: p.dateStyle, skipExisting: p.skipExisting } });
-    }
+    // A single rename keeps the styles it chose, but not its typed name.
+    const { template: _typed, ...styles } = p;
+    usePrefs.getState().set({ renamePattern: single ? { ...(saved ?? DEFAULT_PATTERN), ...styles } : p });
     try {
       await run(
         ready.map((x) => ({ id: x.row.id, name: x.to })),
@@ -148,7 +168,7 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
       <form
         role="dialog"
         aria-label={single ? "Rename file" : `Rename ${rows.length} files`}
-        className="animate-pop flex max-h-[86vh] w-[660px] flex-col overflow-hidden rounded-2xl border border-line2 bg-panel shadow-pop"
+        className="animate-pop flex max-h-[86vh] w-[700px] max-w-[calc(100vw-32px)] flex-col overflow-hidden rounded-2xl border border-line2 bg-panel shadow-pop"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
@@ -185,13 +205,7 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
               />
               <button
                 type="button"
-                onClick={(e) =>
-                  openMenuBelow(
-                    e.currentTarget,
-                    PRESETS.map((x) => ({ label: x.label, hint: x.template, checked: x.template === p.template, onSelect: () => set({ template: x.template }) })),
-                    "right",
-                  )
-                }
+                onClick={(e) => openMenuBelow(e.currentTarget, presetMenu(p, setP), "right")}
                 className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line2 px-3 text-ui text-text2 hover:bg-raised hover:text-text"
               >
                 Presets <ChevronDown size={14} />
@@ -199,21 +213,27 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="mr-1 text-small text-text3">Insert</span>
-              {TOKENS.map((t) => (
-                <button
-                  key={t.token}
-                  type="button"
-                  title={uses(t.token) ? `${t.title}. Click again to take it out` : t.title}
-                  aria-pressed={uses(t.token)}
-                  onClick={() => (uses(t.token) ? replace(removeToken(p.template, t.token)) : insert(t.token))}
-                  className={cx(
-                    "flex h-6 items-center rounded-md border px-2 text-small transition-colors",
-                    uses(t.token) ? "border-accent bg-accent-soft text-accent-ink" : "border-line2 text-text2 hover:bg-raised hover:text-text",
-                  )}
-                >
-                  {t.label}
-                </button>
-              ))}
+              {TOKENS.map((t) => {
+                const on = uses(t.id);
+                // A token with nothing to give here can still be taken out, but not put in.
+                const unavailable = on ? null : (t.unavailable?.(info) ?? null);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={unavailable ?? (on ? `${t.title}. Click again to take it out` : t.title)}
+                    aria-pressed={on}
+                    disabled={unavailable != null}
+                    onClick={() => (on ? replace(removeToken(p.template, t.id)) : insert(`{${t.id}}`))}
+                    className={cx(
+                      "flex h-6 items-center rounded-md border px-2 text-small transition-colors disabled:opacity-40",
+                      on ? "border-accent bg-accent-soft text-accent-ink" : "border-line2 text-text2 enabled:hover:bg-raised enabled:hover:text-text",
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 onClick={() => replace("")}
@@ -225,61 +245,12 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2.5">
-            <span className={cx("text-ui", uses("{key}") ? "text-text2" : "text-text3")}>Key</span>
-            <div className="flex flex-wrap items-center gap-3">
-              <Segmented<KeyStyle>
-                label="Key style"
-                size="sm"
-                value={p.keyStyle}
-                onChange={(keyStyle) => set({ keyStyle })}
-                options={[
-                  { value: "short", label: "F#m" },
-                  { value: "compact", label: "F#min" },
-                  { value: "long", label: "F# minor" },
-                  { value: "camelot", label: "11A", title: "Camelot" },
-                ]}
-              />
-              <Switch size="sm" checked={p.relativeMajor} onChange={(relativeMajor) => set({ relativeMajor })} label={<span className="text-small">Minor keys as their relative major (F#m → A)</span>} />
-            </div>
-            <span className={cx("text-ui", uses("{bpm}") ? "text-text2" : "text-text3")}>Tempo</span>
-            <Segmented<"whole" | "exact">
-              label="Tempo style"
-              size="sm"
-              className="justify-self-start"
-              value={p.bpmWhole ? "whole" : "exact"}
-              onChange={(v) => set({ bpmWhole: v === "whole" })}
-              options={[
-                { value: "whole", label: "124", title: "Rounded to whole beats" },
-                { value: "exact", label: "123.45", title: "As stored, up to two decimals" },
-              ]}
-            />
-            <span className={cx("text-ui", uses("{date}") ? "text-text2" : "text-text3")}>Date</span>
-            <Segmented<DateStyle>
-              label="Date style"
-              size="sm"
-              className="justify-self-start"
-              value={p.dateStyle}
-              onChange={(dateStyle) => set({ dateStyle })}
-              options={[
-                { value: "ymd", label: "2026-10-03" },
-                { value: "compact", label: "20261003" },
-                { value: "dmy", label: "03-10-2026" },
-                { value: "mdy", label: "10-03-2026" },
-              ]}
-            />
-          </div>
-          <Switch
-            checked={p.skipExisting}
-            onChange={(skipExisting) => set({ skipExisting })}
-            className="self-start"
-            label={<span className="text-ui">Leave out a tempo or key the name already has</span>}
-          />
+          <RenameStyles p={p} set={set} />
 
           <div className="flex min-h-0 flex-col gap-2">
             <div className="flex items-baseline justify-between gap-3">
               <SectionLabel>Preview</SectionLabel>
-              <span className="text-micro text-text3">
+              <span className="flex items-baseline gap-2 text-micro text-text3">
                 {[
                   `${plural(ready.length, "file")} to rename`,
                   unchanged ? `${unchanged.toLocaleString("en-US")} unchanged` : "",
@@ -287,6 +258,11 @@ function RenameDialog({ rows }: { rows: SampleRow[] }) {
                 ]
                   .filter(Boolean)
                   .join(" · ")}
+                {clashes && !uses("n") && (
+                  <button type="button" onClick={addNumber} className="font-medium text-accent-ink hover:underline">
+                    Add a number to tell them apart
+                  </button>
+                )}
               </span>
             </div>
             <div className="flex max-h-[240px] min-h-[64px] flex-col overflow-y-auto rounded-xl border border-line">

@@ -3,11 +3,11 @@ import { hasMod, isTextInput } from "../lib/platform";
 import { useMenu } from "../components/Menu";
 import { targetIds, useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
-import { shouldLoop, usePlayer } from "../store/player";
+import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { editFor, stepPitch, useEdits, useProject } from "../store/project";
 import { useTapTempo } from "../components/ProjectControls";
-import { findSimilar, removeFromCollection } from "../lib/actions";
+import { findSimilar, removeFromCollection, toggleLoop } from "../lib/actions";
 import { stepScale } from "../lib/scale";
 import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
 import { scaleChords } from "../lib/theory";
@@ -175,9 +175,7 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
       } else if (e.key === "t" || e.key === "T") {
         tap();
       } else if ((e.key === "l" || e.key === "L") && row) {
-        const next = !shouldLoop(row);
-        usePrefs.getState().set(row.kind === "loop" ? { loopLoops: next } : { loopShots: next });
-        if (player.id === row.id) player.setLooping(next);
+        toggleLoop(row);
       } else if (e.key === "/") {
         e.preventDefault();
         search.current?.focus();

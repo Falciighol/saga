@@ -60,6 +60,11 @@ pub struct SampleRow {
     pub favorite: bool,
     pub online: bool,
     pub play_count: i64,
+    /// When the file was created, in seconds since 1970 (its last change where the drive doesn't
+    /// keep a created time); null until a scan has read it.
+    pub created: Option<i64>,
+    /// When Saga first indexed it, in seconds since 1970.
+    pub added: i64,
 }
 
 /// A tempo set by hand: `{ "to": "bpm", "bpm": 124 }`, `{ "to": "noTempo" }`, or back to what
@@ -131,6 +136,10 @@ pub struct Filters {
     pub sample_rates: Vec<i64>,
     pub tags: Vec<String>,
     pub exclude_tags: Vec<String>,
+    /// Files created at or after this time, in seconds since 1970.
+    pub created_from: Option<i64>,
+    /// Files created before this time (the end of the range, not included).
+    pub created_to: Option<i64>,
     pub favorites: bool,
     pub collection_id: Option<i64>,
     pub source_id: Option<i64>,

@@ -91,6 +91,15 @@ const WORDS: Record<string, string[]> = {
   FX: ["FX_Riser", "FX_Impact", "FX_Sweep"],
 };
 
+const DAY = 86_400;
+
+/** Spread over the last 400 days, a few created today, with Saga finding each a few days later. */
+function mockDates(id: number): Pick<SampleRow, "created" | "added"> {
+  const now = Math.floor(Date.now() / 1000);
+  const created = now - ((id * 7919) % 400) * DAY - ((id * 3631) % DAY);
+  return { created, added: Math.min(now, created + ((id * 31) % 5) * DAY) };
+}
+
 function build(): SampleRow[] {
   const r = rng(42);
   const rows: SampleRow[] = [];
@@ -145,6 +154,8 @@ function build(): SampleRow[] {
           favorite: r() > 0.9,
           online: true,
           playCount: 0,
+          // From the id, not the random stream, so adding dates didn't change the rest of the mock.
+          ...mockDates(id - 1),
         });
       }
     }
@@ -374,6 +385,8 @@ function matches(r: SampleRow, f: Filters, omit?: string): boolean {
   if (f.sampleRates?.length && !f.sampleRates.includes(r.sampleRate ?? 0)) return false;
   if (f.tags?.some((t) => !r.tags.includes(t))) return false;
   if (f.excludeTags?.some((t) => r.tags.includes(t))) return false;
+  if (f.createdFrom != null && (r.created ?? -Infinity) < f.createdFrom) return false;
+  if (f.createdTo != null && (r.created ?? Infinity) >= f.createdTo) return false;
   if (f.favorites && !r.favorite) return false;
   if (f.collectionId != null && !members.get(f.collectionId)?.has(r.id)) return false;
   if (f.sourceId != null && r.sourceId !== f.sourceId) return false;
@@ -394,6 +407,8 @@ function query(req: QueryRequest) {
   if (req.sort === "name") by((r) => r.name.toLowerCase());
   else if (req.sort === "bpm") by((r) => r.bpm);
   else if (req.sort === "duration") by((r) => r.duration);
+  else if (req.sort === "created") by((r) => r.created);
+  else if (req.sort === "added") by((r) => r.added);
   else if (req.sort === "key") by((r) => (r.keyPc == null ? null : r.keyPc * 3 + (r.keyMode ?? 0)));
   else if (req.sort === "fit" && req.filters.key) {
     const k = req.filters.key;
@@ -606,6 +621,16 @@ function mockTimeline(): number {
 
 export function installMockBackend() {
   mockWindows("main");
+  // Like the engine, report when a sample that isn't looping reaches its end (Play next waits for it).
+  window.setInterval(() => {
+    if (!playing || playing.paused || playing.looping) return;
+    const p = playing.params;
+    const length = (p.regionEnd ?? playing.duration) - (p.regionStart ?? 0);
+    if (mockTimeline() < length) return;
+    playing.timeline = length;
+    playbackEvent("ended");
+    playing = null;
+  }, 50);
   mockIPC(
     (cmd, raw) => {
       const args = (raw ?? {}) as Record<string, unknown>;
@@ -668,8 +693,12 @@ export function installMockBackend() {
         }
         case "get_samples":
           return (args.ids as number[]).flatMap((id) => ROWS.filter((r) => r.id === id).map((r) => ({ ...r })));
-        case "query_ids":
-          return ROWS.filter((r) => matches(r, args.filters as Filters)).map((r) => r.id);
+        case "query_ids": {
+          const filters = args.filters as Filters;
+          if (!args.sort) return ROWS.filter((r) => matches(r, filters)).map((r) => r.id);
+          const req = { filters, sort: args.sort, desc: args.desc, seed: args.seed, offset: 0, limit: ROWS.length } as QueryRequest;
+          return query(req).rows.map((r) => r.id);
+        }
         case "set_sample_values": {
           const rows = (args.ids as number[]).map((id) => ROWS.find((r) => r.id === id)).filter((r): r is SampleRow => r != null);
           for (const r of rows) setValues(r, args.tempo as TempoChange | null, args.key as KeyChange | null);
@@ -805,6 +834,16 @@ export function installMockBackend() {
             playing.at = performance.now();
             playing.params = args.params as MockParams;
             playbackEvent(playing.paused ? "paused" : "playing");
+          }
+          return null;
+        case "stop":
+          playing = null;
+          return null;
+        case "set_loop":
+          if (playing) {
+            playing.timeline = mockTimeline();
+            playing.at = performance.now();
+            playing.looping = args.looping as boolean;
           }
           return null;
         case "pause":

@@ -51,6 +51,8 @@ pub struct Indexer {
     queued: Mutex<HashMap<i64, bool>>,
     counters: Counters,
     watchers: Mutex<HashMap<i64, Debouncer<RecommendedWatcher>>>,
+    /// Held while Saga renames files itself; scans wait for it (see `hold_rescans`).
+    renaming: Mutex<()>,
 }
 
 /// Background work should never compete with the DAW for CPU: on macOS, run it at
@@ -150,6 +152,12 @@ fn clean_dir(dir: &str) -> Result<String, String> {
     Ok(segs.join("/"))
 }
 
+/// When the file was created, or last changed where the drive doesn't keep a created time.
+/// Matches what `file_dates` reports for the rename dialog.
+fn created_secs(m: &std::fs::Metadata) -> i64 {
+    m.created().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or_else(|| mtime_secs(m))
+}
+
 fn mtime_secs(m: &std::fs::Metadata) -> i64 {
     m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
@@ -194,6 +202,7 @@ impl Indexer {
             queued: Mutex::new(HashMap::new()),
             counters: Counters::default(),
             watchers: Mutex::new(HashMap::new()),
+            renaming: Mutex::new(()),
         });
 
         let me = indexer.clone();
@@ -202,6 +211,7 @@ impl Indexer {
             .spawn(move || {
                 lower_thread_priority();
                 for job in scan_rx {
+                    let held = me.renaming.lock();
                     let source = match job {
                         ScanJob::Source(id) => {
                             me.scan_source(id);
@@ -216,6 +226,7 @@ impl Indexer {
                             id
                         }
                     };
+                    drop(held);
                     me.enqueue_pending(Some(source));
                     me.jobs.fetch_sub(1, Ordering::Relaxed);
                 }
@@ -527,6 +538,7 @@ impl Indexer {
         let under = (!rel.is_empty()).then(|| (start_path.as_ref(), rel));
         let mut existing = self.db.files_under(source_id, under).unwrap_or_default();
         let mut batch: Vec<ScannedFile> = Vec::new();
+        let mut undated: Vec<(i64, i64)> = Vec::new();
         let flush = |batch: &mut Vec<ScannedFile>| {
             if batch.is_empty() {
                 return;
@@ -549,8 +561,14 @@ impl Indexer {
             let path = entry.path().to_string_lossy().to_string();
             let (size, mtime) = (md.len() as i64, mtime_secs(&md));
             let existing_id = match existing.remove(&path) {
-                Some((_, s, m)) if s == size && m == mtime => continue,
-                Some((id, _, _)) => Some(id),
+                Some((id, s, m, dated)) if s == size && m == mtime => {
+                    // Unchanged, but indexed before Saga kept created times.
+                    if !dated {
+                        undated.push((id, created_secs(&md)));
+                    }
+                    continue;
+                }
+                Some((id, ..)) => Some(id),
                 None => None,
             };
             let file = entry.path();
@@ -561,6 +579,7 @@ impl Indexer {
                 path,
                 size,
                 mtime,
+                created: Some(created_secs(&md)),
                 existing: existing_id,
             });
             c.found.fetch_add(1, Ordering::Relaxed);
@@ -569,6 +588,12 @@ impl Indexer {
             }
         }
         flush(&mut batch);
+        if !undated.is_empty() {
+            match self.db.set_created(&undated) {
+                Ok(()) => c.library_dirty.store(true, Ordering::Relaxed),
+                Err(e) => eprintln!("saga: failed to store created times: {e}"),
+            }
+        }
 
         let gone: Vec<i64> = existing.values().map(|v| v.0).collect();
         if !gone.is_empty() {
@@ -599,6 +624,13 @@ impl Indexer {
             }
         }
         self.counters.progress_dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Holds back scans while Saga renames files itself, so the folder watcher never looks at a
+    /// file between its old name and its new one, when the library still has the old path and
+    /// would drop the sample (and its favorite, tags and collections). Scans run once it's dropped.
+    pub fn hold_rescans(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.renaming.lock()
     }
 
     fn watch(&self, id: i64, root: &Path) {
@@ -705,6 +737,30 @@ mod tests {
 
         ix.remove_source(src).unwrap();
         assert!(all(&db).is_empty());
+    }
+
+    #[test]
+    fn created_times_are_kept_and_filled_in() {
+        let lib = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write_wav(&lib.path().join("Pack/Kick_Punchy.wav"), 0.3);
+        let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
+        let ix = Indexer::start(db.clone(), Arc::new(|_, _| {}));
+        let src = ix.add_source(&lib.path().to_string_lossy(), &[]).unwrap();
+        wait_idle(&ix);
+        let created = || all(&db)[0].created;
+        let first = created().expect("indexing stores the created time");
+        let md = std::fs::metadata(lib.path().join("Pack/Kick_Punchy.wav")).unwrap();
+        assert_eq!(first, created_secs(&md));
+
+        // A library indexed before Saga kept created times gets them on the next scan, without
+        // the unchanged file being indexed (or analyzed) again.
+        db.forget_created();
+        assert_eq!(created(), None);
+        ix.rescan(src);
+        wait_idle(&ix);
+        assert_eq!(created(), Some(first));
+        assert_eq!(all(&db)[0].status, 1);
     }
 
     #[test]

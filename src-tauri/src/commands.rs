@@ -9,7 +9,7 @@ use crate::render::{self, file_name, free_path, render_key, render_name, render_
 use crate::sequence::{SeqNote, Sequence};
 use crate::sounds::{Aspect, SoundIndex};
 use crate::synth::{NoteEvent, Preset};
-use crate::{analysis, features, map, AppState};
+use crate::{analysis, features, map, rename, AppState};
 use base64::Engine as _;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -151,11 +151,15 @@ pub async fn get_sample(state: State<'_, AppState>, id: i64) -> CmdResult<Option
     state.db.sample(id).map_err(err)
 }
 
-/// Ids of every sample the filters match, for selecting them all.
+/// Ids of every sample the filters match, for selecting them all. Given the list's sort, they come
+/// in the order the list shows them, so actions on all of them (numbering, dragging) keep it.
 #[tauri::command]
-pub async fn query_ids(state: State<'_, AppState>, filters: Filters) -> CmdResult<Vec<i64>> {
+pub async fn query_ids(state: State<'_, AppState>, filters: Filters, sort: Option<String>, desc: Option<bool>, seed: Option<i64>) -> CmdResult<Vec<i64>> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || db.matching_ids(&filters)).await.map_err(err)?.map_err(err)
+    tauri::async_runtime::spawn_blocking(move || db.matching_ids(&filters, sort.as_deref().map(|s| (s, desc.unwrap_or(false), seed.unwrap_or(0)))))
+        .await
+        .map_err(err)?
+        .map_err(err)
 }
 
 /// Rows for these ids, in the same order (ones no longer in the library are left out).
@@ -242,86 +246,16 @@ pub async fn file_dates(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<
     .map_err(err)
 }
 
-/// A new file name (without its extension) as typed, or why it can't be one on macOS or Windows.
-fn valid_name(name: &str) -> Result<String, String> {
-    let n = name.trim();
-    if n.is_empty() {
-        return Err("The new name is empty".into());
-    }
-    if n.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control()) {
-        return Err("Names can't contain / \\ : * ? \" < > |".into());
-    }
-    if n.starts_with('.') || n.ends_with('.') {
-        return Err("Names can't start or end with a dot".into());
-    }
-    if n.len() > 200 {
-        return Err("That name is too long".into());
-    }
-    let upper = n.to_ascii_uppercase();
-    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str())
-        || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit());
-    if reserved {
-        return Err("Windows keeps that name for itself".into());
-    }
-    Ok(n.to_string())
-}
-
-/// Renames one sample's file in its folder, and Ableton's analysis file next to it.
-fn rename_file(db: &crate::db::Db, row: &SampleRow, name: &str) -> Result<String, String> {
-    if !row.online {
-        return Err("This sample's drive isn't connected".into());
-    }
-    let new = valid_name(name)?;
-    if new == row.name {
-        return Ok(new);
-    }
-    let old_path = PathBuf::from(&row.path);
-    if !old_path.is_file() {
-        return Err("The file isn't there any more".into());
-    }
-    // Keep the extension exactly as it was ("WAV" stays "WAV").
-    let file_name = match old_path.extension() {
-        Some(ext) => format!("{new}.{}", ext.to_string_lossy()),
-        None => new.clone(),
-    };
-    let new_path = old_path.with_file_name(&file_name);
-    // On a drive that ignores case, a change of case alone names the same file.
-    let same_file = new_path.to_string_lossy().to_lowercase() == old_path.to_string_lossy().to_lowercase();
-    if new_path.exists() && !same_file {
-        return Err(format!("There's already a file called {file_name}"));
-    }
-    std::fs::rename(&old_path, &new_path).map_err(|e| format!("Couldn't rename it: {e}"))?;
-    let new_str = new_path.to_string_lossy().to_string();
-    if let Err(e) = db.rename_sample(row.id, &new_str, &new) {
-        let _ = std::fs::rename(&new_path, &old_path);
-        return Err(e.to_string());
-    }
-    let sidecar = |p: &Path| PathBuf::from(format!("{}.asd", p.to_string_lossy()));
-    let (old_asd, new_asd) = (sidecar(&old_path), sidecar(&new_path));
-    if old_asd.is_file() && !new_asd.exists() {
-        let _ = std::fs::rename(old_asd, new_asd);
-    }
-    Ok(new)
-}
-
 /// Renames sample files where they are. Each sample keeps its favorite, tags, collections and
 /// edits. Only ever run when asked, from the rename dialog.
 #[tauri::command]
 pub async fn rename_samples(state: State<'_, AppState>, renames: Vec<RenameRequest>) -> CmdResult<Vec<RenameOutcome>> {
     let ids: Vec<i64> = renames.iter().map(|r| r.id).collect();
     let rows: HashMap<i64, SampleRow> = state.db.samples_by_ids(&ids).map_err(err)?.into_iter().map(|r| (r.id, r)).collect();
-    let db = state.db.clone();
+    let (db, indexer) = (state.db.clone(), state.indexer.clone());
     tauri::async_runtime::spawn_blocking(move || {
-        renames
-            .iter()
-            .map(|r| match rows.get(&r.id) {
-                Some(row) => match rename_file(&db, row, &r.name) {
-                    Ok(to) => RenameOutcome { id: r.id, from: row.name.clone(), to, error: None },
-                    Err(e) => RenameOutcome { id: r.id, from: row.name.clone(), to: r.name.clone(), error: Some(e) },
-                },
-                None => RenameOutcome { id: r.id, from: String::new(), to: r.name.clone(), error: Some("No longer in the library".into()) },
-            })
-            .collect()
+        let _hold = indexer.hold_rescans();
+        rename::rename_samples(&db, &rows, &renames)
     })
     .await
     .map_err(err)
@@ -879,7 +813,7 @@ pub async fn sound_map(state: State<'_, AppState>, kind: Option<String>, aspect:
 pub async fn map_matches(state: State<'_, AppState>, key: String, filters: Filters) -> CmdResult<MapMatches> {
     let layout = state.layouts.lock().values().find(|l| l.key() == key).cloned().ok_or("The sound map changed. Reload it.")?;
     let db = state.db.clone();
-    let ids: HashSet<i64> = tauri::async_runtime::spawn_blocking(move || db.matching_ids(&filters)).await.map_err(err)?.map_err(err)?.into_iter().collect();
+    let ids: HashSet<i64> = tauri::async_runtime::spawn_blocking(move || db.matching_ids(&filters, None)).await.map_err(err)?.map_err(err)?.into_iter().collect();
     let mut bits = vec![0u8; layout.ids.len().div_ceil(8)];
     let mut matched = 0;
     for (k, id) in layout.ids.iter().enumerate() {
@@ -967,62 +901,4 @@ pub async fn set_ui_scale<R: Runtime>(window: WebviewWindow<R>, state: State<'_,
     let mini = state.full_window.lock().is_some();
     let min = if mini { (MINI_MIN_WIDTH, MINI_MIN_HEIGHT) } else { FULL_MIN };
     fit_min_size(&window, scaled(&window, zoom, min)).map_err(err)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::{Db, ScannedFile};
-
-    #[test]
-    fn names_that_cannot_be_file_names() {
-        assert_eq!(valid_name("  Loop_124_Am "), Ok("Loop_124_Am".into()));
-        assert_eq!(valid_name("Kick 124.5 BPM"), Ok("Kick 124.5 BPM".into()));
-        for bad in ["", "   ", "a/b", "a\\b", "what?", "a:b", ".hidden", "trailing.", "con", "LPT1"] {
-            assert!(valid_name(bad).is_err(), "{bad:?}");
-        }
-        assert!(valid_name("Console").is_ok() && valid_name("COM10").is_ok());
-    }
-
-    #[test]
-    fn renames_files_where_they_are() {
-        let lib = tempfile::tempdir().unwrap();
-        let data = tempfile::tempdir().unwrap();
-        let dir = lib.path().join("Pack");
-        std::fs::create_dir_all(&dir).unwrap();
-        for f in ["Bass Loop.WAV", "Bass Loop.WAV.asd", "Taken_120_C.WAV", "Kick.wav"] {
-            std::fs::write(dir.join(f), b"x").unwrap();
-        }
-        let db = Db::open(&data.path().join("t.db")).unwrap();
-        let src = db.add_source(&lib.path().to_string_lossy()).unwrap();
-        let file = |name: &str, ext: &str| ScannedFile {
-            path: dir.join(format!("{name}.{ext}")).to_string_lossy().to_string(),
-            dir: "Pack".into(),
-            name: name.into(),
-            ext: ext.to_lowercase(),
-            size: 1,
-            mtime: 1,
-            existing: None,
-        };
-        db.upsert_files(src, "lib", &[file("Bass Loop", "WAV"), file("Kick", "wav")]).unwrap();
-        let ids = db.ids_for_paths(&[dir.join("Bass Loop.WAV").to_string_lossy().to_string(), dir.join("Kick.wav").to_string_lossy().to_string()]).unwrap();
-        let rows = db.samples_by_ids(&ids).unwrap();
-
-        // The extension stays as it was, and Ableton's analysis file follows the sample.
-        assert_eq!(rename_file(&db, &rows[0], "Bass Loop_120_C"), Ok("Bass Loop_120_C".into()));
-        assert!(dir.join("Bass Loop_120_C.WAV").is_file() && dir.join("Bass Loop_120_C.WAV.asd").is_file());
-        assert!(!dir.join("Bass Loop.WAV").exists() && !dir.join("Bass Loop.WAV.asd").exists());
-        let row = db.sample(ids[0]).unwrap().unwrap();
-        assert_eq!((row.name.as_str(), row.path.clone()), ("Bass Loop_120_C", dir.join("Bass Loop_120_C.WAV").to_string_lossy().to_string()));
-
-        // Another file already has the name: nothing changes.
-        assert!(rename_file(&db, &row, "Taken_120_C").unwrap_err().contains("already a file"));
-        assert!(dir.join("Bass Loop_120_C.WAV").is_file());
-        // A change of case alone works, even where the drive ignores case.
-        assert_eq!(rename_file(&db, &rows[1], "KICK"), Ok("KICK".into()));
-        assert_eq!(std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case("kick.wav")).map(|e| e.file_name().to_string_lossy().to_string()).collect::<Vec<_>>(), vec!["KICK.wav"]);
-        // Unchanged names are left alone.
-        let kick = db.sample(ids[1]).unwrap().unwrap();
-        assert_eq!(rename_file(&db, &kick, " KICK "), Ok("KICK".into()));
-    }
 }

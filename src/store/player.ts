@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { api, errorMessage } from "../lib/api";
 import { computeProcessing, type ProcessParams } from "../lib/processing";
 import type { PlaybackEvent, SampleRow } from "../lib/types";
-import { usePrefs } from "./prefs";
+import { usePrefs, type PrefValues } from "./prefs";
 import { editFor, useEdits, useProject } from "./project";
 import { toast } from "./toasts";
 
@@ -33,8 +33,18 @@ interface PlayerState {
   handleEvent: (e: PlaybackEvent) => void;
 }
 
+/** Whether this sample repeats when played. Nothing does while Play next is on, so the next one can start. */
 export function shouldLoop(row: Pick<SampleRow, "kind">): boolean {
-  const p = usePrefs.getState();
+  return loopsIn(usePrefs.getState(), row);
+}
+
+/** `shouldLoop` for components, re-rendering when the loop or Play next settings change. */
+export function useLoopOn(row: Pick<SampleRow, "kind"> | null): boolean {
+  return usePrefs((p) => row != null && loopsIn(p, row));
+}
+
+function loopsIn(p: Pick<PrefValues, "playNext" | "loopLoops" | "loopShots">, row: Pick<SampleRow, "kind">): boolean {
+  if (p.playNext) return false;
   return row.kind === "loop" ? p.loopLoops : p.loopShots;
 }
 

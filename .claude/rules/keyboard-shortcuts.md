@@ -45,7 +45,7 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
 | `←` | row selected | `player.seek(row, 0)` | README, Settings list |
 | `F` | row selected | `browse.toggleFavorite(row)` | README, Settings list, `sampleMenu` hint |
 | `⌫` / `Del` | a collection is open, list view or mini, no editor | `removeFromCollection(view.id, targetIds())` (lib/actions, Undo toast) | README, Settings list, "Remove from this collection" menu hints |
-| `L` | row selected | flips `prefs.loopLoops` or `loopShots` by kind, then `player.setLooping` | README, Settings list, "Loop (L)" labels in PreviewPanel, MiniPlayer, Editor |
+| `L` | row selected | `toggleLoop(row)` (lib/actions): flips `prefs.loopLoops` or `loopShots` by kind, turns Play next off when turning looping on, then `player.setLooping` | README, Settings list, "Loop (L)" labels in PreviewPanel, MiniPlayer, Editor |
 | `E` | row selected, not mini | `useEditor.open(id)` / `close()` | README, Settings list, PreviewPanel title |
 | `M` | not mini, no editor | `ui.toggleView()` (list ⇄ map) | README, Settings list |
 | `H` | not mini | `ui.toggleLab()` | README, Settings list, ProjectControls "(H)" title |

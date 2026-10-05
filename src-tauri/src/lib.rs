@@ -17,6 +17,7 @@ mod model;
 mod query;
 mod record;
 mod render;
+mod rename;
 mod sequence;
 mod sounds;
 mod synth;
@@ -309,7 +310,7 @@ mod ipc_tests {
         let mut f = json!({
             "text": "", "kind": null, "categories": [], "bpmMin": null, "bpmMax": null, "halfDouble": false,
             "key": null, "durMin": null, "durMax": null, "formats": [], "channels": null, "sampleRates": [],
-            "tags": [], "excludeTags": []
+            "tags": [], "excludeTags": [], "createdFrom": null, "createdTo": null
         });
         for (k, v) in extra.as_object().unwrap() {
             f[k] = v.clone();
@@ -424,6 +425,45 @@ mod ipc_tests {
         let path = bass["path"].as_str().unwrap();
         assert_eq!(call(&w, "ids_for_paths", json!({ "paths": [path] })).unwrap(), json!([bass_id]));
         assert!(call(&w, "get_sample", json!({ "id": bass_id })).unwrap()["favorite"].as_bool().unwrap());
+
+        // Selecting all keeps the list's order (by name, Z to A here), so numbering follows it.
+        let named = call(&w, "query_samples", json!({ "request": { "filters": ui_filters(json!({})), "sort": "name", "desc": true, "offset": 0, "limit": 10, "seed": 1 } })).unwrap();
+        let shown: Vec<Value> = named["rows"].as_array().unwrap().iter().map(|r| r["id"].clone()).collect();
+        assert_eq!(call(&w, "query_ids", json!({ "filters": ui_filters(json!({})), "sort": "name", "desc": true, "seed": 1 })).unwrap(), json!(shown));
+        assert_eq!(call(&w, "query_ids", json!({ "filters": ui_filters(json!({})) })).unwrap().as_array().unwrap().len(), 3);
+
+        // Every row knows when its file was created and when Saga found it, and the list can be
+        // filtered and sorted by the created date.
+        let created = bass["created"].as_i64().unwrap();
+        assert!(created > 1_600_000_000 && bass["added"].as_i64().unwrap() >= created - 60, "{bass}");
+        let between = |from: i64, to: i64| call(&w, "query_samples", request(ui_filters(json!({ "createdFrom": from, "createdTo": to })))).unwrap()["total"].clone();
+        assert_eq!(between(created - 86_400, created + 86_400), 3);
+        assert_eq!(between(created + 86_400, created + 2 * 86_400), 0);
+        let newest = call(&w, "query_samples", json!({ "request": { "filters": ui_filters(json!({})), "sort": "created", "desc": true, "offset": 0, "limit": 10, "seed": 1 } })).unwrap();
+        assert_eq!(newest["total"], 3);
+        for sort in ["added", "created"] {
+            let rows = call(&w, "query_samples", json!({ "request": { "filters": ui_filters(json!({})), "sort": sort, "desc": true, "offset": 0, "limit": 10, "seed": 1 } })).unwrap();
+            let times: Vec<i64> = rows["rows"].as_array().unwrap().iter().map(|r| r[sort].as_i64().unwrap()).collect();
+            assert!(times.windows(2).all(|p| p[0] >= p[1]), "{sort}: {times:?}");
+        }
+
+        // Two samples trade names and back while the folder watcher runs. Both keep their ids, so
+        // the favorite, tag and collection stay with the bass.
+        let lead = call(&w, "query_samples", request(ui_filters(json!({ "text": "lead" })))).unwrap()["rows"][0].clone();
+        let (bass_name, lead_name) = (bass["name"].clone(), lead["name"].clone());
+        let swap = |for_bass: &Value, for_lead: &Value| {
+            let out = call(&w, "rename_samples", json!({ "renames": [{ "id": bass_id, "name": for_bass }, { "id": lead["id"], "name": for_lead }] })).unwrap();
+            assert!(out.as_array().unwrap().iter().all(|o| o["error"].is_null()), "{out}");
+            settle();
+            out
+        };
+        let out = swap(&lead_name, &bass_name);
+        assert_eq!((out[0]["from"].clone(), out[0]["to"].clone()), (bass_name.clone(), lead_name.clone()));
+        let renamed = call(&w, "get_sample", json!({ "id": bass_id })).unwrap();
+        assert_eq!((renamed["name"].clone(), renamed["favorite"].clone(), renamed["userTags"].clone()), (lead_name.clone(), json!(true), json!(["keeper"])));
+        assert_eq!(call(&w, "query_samples", request(ui_filters(json!({})))).unwrap()["total"], 3);
+        swap(&bass_name, &lead_name);
+        assert_eq!(call(&w, "get_sample", json!({ "id": bass_id })).unwrap()["name"], bass_name);
 
         // Phase 3: detection, Find similar and the sound map.
         assert_eq!(bass["bpmSource"], "name");

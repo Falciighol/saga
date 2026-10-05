@@ -3,7 +3,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { fmtCount } from "../lib/format";
 import { keyFilterLabel } from "../lib/keys";
 import type { SortKey } from "../lib/types";
-import { activeFilterCount, useBrowse } from "../store/browse";
+import { activeFilterCount, firstDesc, useBrowse } from "../store/browse";
+import { createdLabel } from "./CreatedFilter";
 import { FilterPanel, lengthLabel, tempoLabel } from "./FilterPanel";
 import { openMenuBelow, type MenuItem } from "./Menu";
 import { cx, Divider, IconButton } from "./ui";
@@ -13,6 +14,7 @@ const SORTS: { key: SortKey; label: string; directional: boolean }[] = [
   { key: "relevance", label: "Best match", directional: false },
   { key: "name", label: "Name", directional: true },
   { key: "added", label: "Recently added", directional: false },
+  { key: "created", label: "Date created", directional: true },
   { key: "played", label: "Recently played", directional: false },
   { key: "duration", label: "Length", directional: true },
   { key: "bpm", label: "Tempo", directional: true },
@@ -81,6 +83,8 @@ export function FilterBar() {
   if (f.channels) pills.push(<Pill key="ch" label="Channels" value={f.channels === 1 ? "Mono" : "Stereo"} onOpen={show} onRemove={() => setFilters({ channels: null })} />);
   if (f.sampleRates.length)
     pills.push(<Pill key="sr" label="Rate" value={f.sampleRates.map((r) => `${r / 1000}k`).join(", ")} onOpen={show} onRemove={() => setFilters({ sampleRates: [] })} />);
+  const created = createdLabel(f);
+  if (created) pills.push(<Pill key="created" label="Created" value={created} onOpen={show} onRemove={() => setFilters({ createdFrom: null, createdTo: null })} />);
   for (const t of f.tags) pills.push(<Pill key={`t-${t}`} label="Tag" value={t} onOpen={show} onRemove={() => setFilters({ tags: f.tags.filter((x) => x !== t) })} />);
   for (const t of f.excludeTags)
     pills.push(<Pill key={`x-${t}`} label="Not" value={t} onOpen={show} onRemove={() => setFilters({ excludeTags: f.excludeTags.filter((x) => x !== t) })} />);
@@ -91,7 +95,7 @@ export function FilterBar() {
       label: s.key === "fit" && !f.key ? `${s.label} (filter by a key first)` : s.label,
       checked: s.key === sort,
       disabled: s.key === "fit" && !f.key,
-      onSelect: () => (s.key === "random" ? shuffle() : setSort(s.key, s.key === sort ? desc : false)),
+      onSelect: () => (s.key === "random" ? shuffle() : setSort(s.key, s.key === sort ? desc : firstDesc(s.key))),
     }));
     if (current.directional) {
       items.push("separator", { label: "Ascending", checked: !desc, onSelect: () => setSort(sort, false) }, { label: "Descending", checked: desc, onSelect: () => setSort(sort, true) });

@@ -89,6 +89,7 @@ src-tauri/src
   render.rs    offline renders, file naming, scratch renders and clearing, zoomable waveform detail
   fonts.rs     installed font discovery for the font settings
   model.rs     types exchanged with the frontend (mirrored in src/lib/types.ts)
+  rename.rs    renaming sample files on request, in two passes so files can trade names
   commands.rs  Tauri commands
   lib.rs       app state, startup, command registration, IPC tests
 src
@@ -98,13 +99,16 @@ src
   hooks/       useHotkeys (every app-wide keyboard shortcut), useTheme (theme, fonts, size)
   components/lab/  the Lab: scale list, pitch circle, keyboard, chords, progressions, key finder,
                tempo & tuning, side panels
-  components/  UI; shared buttons, switches and labels are in ui.tsx, menus in Menu.tsx
+  components/  UI; shared buttons, switches, chips and labels are in ui.tsx, menus in Menu.tsx; the
+               list's columns (cells, header, the Columns menu) in ListColumns.tsx
   lib/         API bindings (api.ts) and types, actions (what menus, buttons and keys share:
                dragging out, setting key/tempo, collections, Find similar), processing
                (tempo/key math, one source of truth for preview and render), theory (scales,
                spelling, chords, key finding, scale fit, scale steps), progressions (presets,
                voicing, rhythms, suggestions), keys and keyMidi (key names, Camelot, the key's
-               MIDI clip), rename (batch rename tokens), renders, soundmap, theme palette,
+               MIDI clip), rename, renameTokens and renamePresets (the batch rename
+               pattern, its tokens and presets), listColumns (the list's columns, their
+               order and which show), renders, soundmap, theme palette,
                fonts, interface size (scale), platform (⌘ or Ctrl), autoTitle (tooltips for
                cut-off text), waveform drawing, formatting
   dev/         the mock backend for working on the UI in a browser
