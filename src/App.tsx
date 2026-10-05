@@ -10,7 +10,6 @@ import { DropTarget, Toasts, UpdateNotice } from "./components/Overlays";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { ConfirmHost, PromptHost } from "./components/Prompt";
 import { RenameHost } from "./components/Rename";
-import { ListHeader } from "./components/ListColumns";
 import { SampleList } from "./components/SampleList";
 import { SelectionBar } from "./components/SelectionBar";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -129,7 +128,6 @@ export default function App() {
                 <>
                   <TypeBar />
                   <FilterBar />
-                  <ListHeader />
                   <div className="relative flex min-h-0 flex-1 flex-col">
                     <SampleList />
                     <SelectionBar />

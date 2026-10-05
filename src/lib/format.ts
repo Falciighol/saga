@@ -17,10 +17,11 @@ export function fmtBytes(n: number): string {
   return `${v < 10 && u > 0 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
 }
 
-/** Compact length for lists: "0.62 s", "7.7 s", "1:34". */
-export function fmtLength(s: number | null | undefined): string {
+/** Compact length for lists: "0.62 s", "7.7 s", "1:34" ("7.70 s" when `aligned`). */
+export function fmtLength(s: number | null | undefined, aligned = false): string {
   if (s == null) return "—";
-  if (s < 1) return `${s.toFixed(2)} s`;
+  // `aligned` keeps two decimals up to a minute, so lengths in a right-aligned column line up on the point.
+  if (s < 1 || (aligned && s < 60)) return `${s.toFixed(2)} s`;
   if (s < 60) return `${s.toFixed(1)} s`;
   const m = Math.floor(s / 60);
   const sec = Math.round(s % 60);

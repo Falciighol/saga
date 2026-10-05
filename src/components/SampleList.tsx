@@ -1,20 +1,22 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pause, Play, Star } from "lucide-react";
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dragSample, dragSamples, pickedMenu, sampleMenu } from "../lib/actions";
 import { hasMod } from "../lib/platform";
-import { compatibleKeys } from "../lib/keys";
-import { fittingKeys, plainScale, scaleById, scaleNotes } from "../lib/theory";
+import { columnLayout, NAME_MIN, type ColumnDef } from "../lib/listColumns";
 import type { SampleRow } from "../lib/types";
 import { activeFilterCount, targetRows, useBrowse } from "../store/browse";
 import { usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
-import { useProject } from "../store/project";
 import { openContextMenu } from "./Menu";
 import { cx } from "./ui";
-import { ColumnCell, useVisibleColumns, type CellContext } from "./ListColumns";
+import { ColumnCell, ListHeader, useKeyFit, useVisibleColumns, type CellContext, type KeyFit } from "./ListColumns";
 
 const ROW_H = 44;
+/** The sticky header's height (h-8) plus the gap under it, which is where the first row starts. */
+const LIST_TOP = 32 + 4;
+/** The sideways scrollbar's height (`::-webkit-scrollbar` in index.css). */
+const SCROLLBAR = 10;
 
 function GripIcon() {
   return (
@@ -29,35 +31,31 @@ function GripIcon() {
   );
 }
 
-/** Marks keys that fit the key filter, or the project key when there's no filter. */
-function useKeyMatcher() {
-  const filterKey = useBrowse((s) => s.filters.key);
-  const projectKey = useProject((s) => s.key);
-  return useMemo(() => {
-    const key = filterKey ?? (projectKey ? { pc: projectKey.pc, mode: projectKey.mode, compatible: true, scale: scaleById(projectKey.scale)?.steps } : null);
-    if (!key) return null;
-    const steps = key.scale?.length ? key.scale : null;
-    const set = !key.compatible ? [{ pc: key.pc, mode: key.mode }] : steps ? fittingKeys(key.pc, steps) : compatibleKeys(key.pc, key.mode);
-    const scale = scaleNotes(key.pc, steps ?? plainScale(key.mode).steps);
-    return (row: SampleRow) =>
-      row.keyPc != null && (row.keyMode === 2 ? scale.includes(row.keyPc) : set.some((k) => k.pc === row.keyPc && k.mode === row.keyMode));
-  }, [filterKey, projectKey]);
-}
-
-const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { row: SampleRow; index: number; keyMatch: boolean | null }) {
+const SampleRowView = memo(function SampleRowView({
+  row,
+  index,
+  keyFit,
+  columns,
+}: {
+  row: SampleRow;
+  index: number;
+  keyFit: KeyFit | null;
+  columns: ColumnDef[];
+}) {
   const selected = useBrowse((s) => s.selected?.id === row.id);
   const picked = useBrowse((s) => s.picked.has(row.id));
   const bpmFixed = usePrefs((s) => s.bpmFixed);
-  const columns = useVisibleColumns();
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const playing = status === "playing" || status === "loading";
   const segments = row.dir.split("/").filter(Boolean);
   const where = segments.length > 1 ? `${segments[0]}  ›  ${segments[segments.length - 1]}` : row.pack;
+  // The waveform column says when a file can't be read. Without it, the name's second line says so instead.
+  const unreadable = row.status === 2 && !columns.some((c) => c.id === "waveform");
 
   const select = (play?: boolean) => useBrowse.getState().selectRow(row, index, play === undefined ? undefined : { play });
   // Acting on a row that's among the picked ones acts on all of them.
   const inPicked = () => useBrowse.getState().picked.has(row.id);
-  const ctx: CellContext = { selected, keyMatch, bpmFixed };
+  const ctx: CellContext = { selected, keyFit, bpmFixed };
 
   return (
     <div
@@ -114,12 +112,12 @@ const SampleRowView = memo(function SampleRowView({ row, index, keyMatch }: { ro
         onDoubleClick={(e) => !e.shiftKey && !hasMod(e) && usePlayer.getState().play(row)}
         className="flex h-11 min-w-0 flex-1 items-center gap-4 pl-1 text-left"
       >
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5" style={{ minWidth: NAME_MIN }}>
           <span className="truncate text-body font-medium text-text">
             {row.name}
             <span className="font-normal text-text3">.{row.ext}</span>
           </span>
-          <span className="truncate text-[11.5px] text-text3">{where}</span>
+          <span className="truncate text-[11.5px] text-text3">{unreadable ? `Can't read this file · ${where}` : where}</span>
         </span>
         {columns.map((c) => (
           <ColumnCell key={c.id} column={c} row={row} ctx={ctx} />
@@ -199,14 +197,35 @@ export function SampleList() {
   const selectedIndex = useBrowse((s) => s.selectedIndex);
   const ensureRange = useBrowse((s) => s.ensureRange);
   const rowAt = useBrowse((s) => s.rowAt);
-  const keyMatcher = useKeyMatcher();
+  const keyFitFor = useKeyFit();
   const parentRef = useRef<HTMLDivElement>(null);
+  const visible = useVisibleColumns();
+  const [width, setWidth] = useState(0);
+  const layout = useMemo(() => columnLayout(visible, width, keyFitFor != null), [visible, width, keyFitFor]);
+  const overflowing = width > 0 && layout.minWidth > width;
+
+  // The waveform gives way as the list narrows, so measure before the first paint to avoid a jump.
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const measure = () => setWidth(el.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const virtualizer = useVirtualizer({
     count: total ?? 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H,
     overscan: 12,
+    // The header shares the scroll area: rows start under it, and a row scrolled into view stops below it.
+    scrollMargin: LIST_TOP,
+    scrollPaddingStart: LIST_TOP - 4,
+    // The virtualizer measures the list with its sideways scrollbar, so a row scrolled into view at the bottom
+    // would end up under it.
+    scrollPaddingEnd: overflowing ? SCROLLBAR : 0,
   });
   const items = virtualizer.getVirtualItems();
   const first = items[0]?.index ?? 0;
@@ -225,17 +244,19 @@ export function SampleList() {
   }, [selectedIndex, virtualizer]);
 
   return (
-    <div ref={parentRef} className="min-h-0 flex-1 overflow-y-auto py-1" aria-label="Samples">
+    // The scrollbar's room is kept even when the rows fit, so the measured width doesn't change as results load.
+    <div ref={parentRef} className="min-h-0 flex-1 overflow-auto pb-1 [scrollbar-gutter:stable]" aria-label="Samples">
+      <ListHeader columns={layout.columns} minWidth={layout.minWidth} overflowing={overflowing} />
       {total === 0 ? (
         <EmptyState />
       ) : (
-        <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        <div className="relative mt-1" style={{ height: virtualizer.getTotalSize(), minWidth: layout.minWidth }}>
           {items.map((vi) => {
             const row = rowAt(vi.index);
             return (
-              <div key={vi.key} className="absolute top-0 left-0 w-full" style={{ height: ROW_H, transform: `translateY(${vi.start}px)` }}>
+              <div key={vi.key} className="absolute top-0 left-0 w-full" style={{ height: ROW_H, transform: `translateY(${vi.start - LIST_TOP}px)` }}>
                 {row ? (
-                  <SampleRowView row={row} index={vi.index} keyMatch={keyMatcher ? keyMatcher(row) : null} />
+                  <SampleRowView row={row} index={vi.index} keyFit={keyFitFor ? keyFitFor(row) : null} columns={layout.columns} />
                 ) : (
                   <div className="flex h-11 items-center gap-4 px-[88px]">
                     <span className="h-2.5 w-56 rounded bg-raised" />

@@ -5,6 +5,9 @@ export const isWindows = typeof navigator !== "undefined" && /Windows/.test(navi
 
 export const modKey = isMac ? "⌘" : "Ctrl";
 
+/** The Option/Alt key as it's shown in text. */
+export const altKey = isMac ? "⌥" : "Alt";
+
 /** True when the keyboard event used the platform's primary modifier. */
 export function hasMod(e: { metaKey: boolean; ctrlKey: boolean }): boolean {
   return isMac ? e.metaKey : e.ctrlKey;

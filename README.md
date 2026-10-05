@@ -48,8 +48,9 @@ named** in Settings (`*` matches anything, so `Stem*` covers `Stems` and `Stem M
   library is spread before you pick a range.
 - **Columns your way.** Right-click the list's header (or use the button at its end) to show or
   hide columns: date created, date added, format, sample rate, bit depth, channels, loudness and
-  times played join the usual ones. Drag a column's title to move it, and click it to sort; dates
-  sort newest first.
+  times played join the usual ones. Drag a column's title to move it (or focus it and press
+  ⌥/Alt ← →), and click it to sort; dates sort newest first. Names always keep their room: when
+  the columns don't fit, the list scrolls sideways.
 - **Organize** with favorites, collections (right-click a sample, or drop samples on a
   collection; `⌫` takes them out again) and your own tags.
 - **Select several** with `⌘`/`Ctrl`-click, `Shift`-click or `⌘`/`Ctrl` `A`, then set their key or
@@ -110,6 +111,8 @@ wheel.
   tape. Saga picks half or double time when that's closer, or you choose.
 - **Key matching** shifts tonal samples to the project key by the smallest interval, with manual
   semitones and cents on top and formant preservation for vocals.
+- **How each key fits** shows next to it in the list and the mini player: `Am in key`,
+  `C relative`, `Dm fits`, or `Gm +2 st`, how far key matching would move it.
 - **Scale lock** makes `[ ]` step a sample through the project key's scale instead of by
   semitones.
 - **The key as MIDI**: drag the tile in the key popup into your DAW for a clip that runs up the

@@ -127,6 +127,11 @@ input:focus-visible {
   outline: none;
 }
 
+/* Menu rows show focus with their hover fill, the way native menus do, instead of a ring. */
+[role="menu"] > button:focus-visible {
+  outline: none;
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -138,6 +143,10 @@ input:focus-visible {
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Where a sideways and an up-down scrollbar meet; WebKit paints it white otherwise. */
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 

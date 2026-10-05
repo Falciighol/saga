@@ -87,6 +87,12 @@ in the Settings list's "In the Lab" group and in the Progressions "Clear bar ⌫
   bar; a twentieth or a quarter of a one-shot), `Home` back to where playback starts. They stop propagation, so the
   global `←` waits until the waveform loses focus; `↑ ↓` still browse.
 - Drag tile and mini player Drag button after a failed render: `Enter`/`Space` try again.
+- List header (`ListHeader` in ListColumns), on a focused column title: `⌥/Alt ← →` move the column (`stepColumn`,
+  announced in a live region), `⇧F10` or the menu key open its column menu. `Enter` sorts, or opens the menu for a
+  title that can't sort. `Esc` during a header drag drops it where it started.
+- Menus (`MenuList` in Menu.tsx): `↑ ↓ Home End` move between rows, `→` opens a submenu, `←` goes back, `Enter`/`Space`
+  choose, `Tab` closes. A menu opened from the keyboard focuses its first row and gives focus back when it closes. One
+  opened with the mouse takes the keyboard on the first `↑`/`↓` (handled in `MenuHost`).
 
 ### Mouse plus modifier
 `Mod`-click a row toggles it in the picked set, `⇧`-click picks a range (`⇧+Mod` adds a range),

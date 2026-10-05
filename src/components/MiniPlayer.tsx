@@ -15,6 +15,7 @@ import { usePrefs } from "../store/prefs";
 import { useEdit, useEdits } from "../store/project";
 import { useUi } from "../store/ui";
 import { lengthLabel, tempoLabel } from "./FilterPanel";
+import { KEY_FIT_TONE, keyFitLabel, keyFitText, useKeyFit, type KeyFit } from "./ListColumns";
 import { openContextMenu } from "./Menu";
 import { Clock, dragHeard, PitchStepper, PLAY_NEXT_LABEL, ReverseIcon, useElementWidth, useSeekOrDrag } from "./PreviewPanel";
 import { KeyControl, SyncSwitch, TempoControl } from "./ProjectControls";
@@ -91,7 +92,7 @@ function FilterChips() {
   );
 }
 
-const MiniRow = memo(function MiniRow({ row, index, width }: { row: SampleRow; index: number; width: number }) {
+const MiniRow = memo(function MiniRow({ row, index, width, keyFit }: { row: SampleRow; index: number; width: number; keyFit: KeyFit | null }) {
   const selected = useBrowse((s) => s.selected?.id === row.id);
   const status = usePlayer((s) => (s.id === row.id ? s.status : "idle"));
   const playing = status === "playing" || status === "loading";
@@ -130,7 +131,14 @@ const MiniRow = memo(function MiniRow({ row, index, width }: { row: SampleRow; i
       <div className="flex min-w-0 flex-1 flex-col gap-[5px]">
         <div className="flex min-w-0 items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-ui font-medium">{row.name}</span>
-          <span className="shrink-0 font-mono text-micro text-text3">{meta.filter(Boolean).join(" · ")}</span>
+          <span className="shrink-0 font-mono text-micro text-text3">
+            {meta.filter(Boolean).join(" · ")}
+            {keyFit && (
+              <span className={cx("ml-1.5", KEY_FIT_TONE[keyFit.fit])} title={keyFitText(keyFit)}>
+                {keyFitLabel(keyFit)}
+              </span>
+            )}
+          </span>
         </div>
         <MiniWave peaks={row.peaks} width={Math.max(40, width)} height={16} sampleId={row.id} emphasized={selected} />
       </div>
@@ -160,6 +168,7 @@ function MiniList() {
   const rowAt = useBrowse((s) => s.rowAt);
   const parent = useRef<HTMLDivElement>(null);
   const [measure, width] = useElementWidth<HTMLDivElement>();
+  const keyFitFor = useKeyFit();
   const virtualizer = useVirtualizer({ count: total ?? 0, getScrollElement: () => parent.current, estimateSize: () => ROW_H, overscan: 10 });
   const items = virtualizer.getVirtualItems();
   const first = items[0]?.index ?? 0;
@@ -186,7 +195,7 @@ function MiniList() {
             const row = rowAt(vi.index);
             return (
               <div key={vi.key} className="absolute top-0 left-0 w-full" style={{ height: ROW_H, transform: `translateY(${vi.start}px)` }}>
-                {row ? <MiniRow row={row} index={vi.index} width={waveWidth} /> : <div className="mx-11 mt-5 h-2.5 w-48 rounded bg-raised" />}
+                {row ? <MiniRow row={row} index={vi.index} width={waveWidth} keyFit={keyFitFor ? keyFitFor(row) : null} /> : <div className="mx-11 mt-5 h-2.5 w-48 rounded bg-raised" />}
               </div>
             );
           })}
