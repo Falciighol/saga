@@ -9,12 +9,16 @@ export function Switch({
   onChange,
   label,
   size = "md",
+  disabled,
+  title,
   className,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: ReactNode;
   size?: "sm" | "md";
+  disabled?: boolean;
+  title?: string;
   className?: string;
 }) {
   const w = size === "sm" ? 22 : 26;
@@ -25,8 +29,10 @@ export function Switch({
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
+      title={title}
       onClick={() => onChange(!checked)}
-      className={cx("flex items-center gap-2 text-ui text-text2", className)}
+      className={cx("flex items-center gap-2 text-ui text-text2 disabled:opacity-45", className)}
     >
       {label != null && <span className="min-w-0 flex-1 text-left">{label}</span>}
       <span

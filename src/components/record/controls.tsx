@@ -1,8 +1,9 @@
-import { AppWindow, AudioLines, ChevronDown, Mic, RefreshCw } from "lucide-react";
+import { AppWindow, AudioLines, ChevronDown, ChevronRight, Eye, EyeOff, Mic, RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { fmtRate } from "../../lib/format";
 import type { AppSource, InputDevice, RecordSource, RecordSources } from "../../lib/types";
 import { usePrefs } from "../../store/prefs";
-import { useRecord } from "../../store/record";
+import { setThresholdDb, THRESHOLD_MAX_DB, THRESHOLD_MIN_DB, useRecord, useThreshold } from "../../store/record";
 import { openMenuBelow, useMenu, type MenuItem } from "../Menu";
 import { cx, Segmented, Switch } from "../ui";
 
@@ -31,6 +32,15 @@ function appIcon(app: AppSource, size = 14) {
 
 export type SourceKind = RecordSource["kind"];
 
+/** The apps under Hidden show in the source menu. It folds again each time the menu opens. */
+let showHidden = false;
+
+/** Moves an app under Hidden in the source menu, or back. Apps are kept by name, since their process changes each launch. */
+function setAppHidden(name: string, hidden: boolean) {
+  const rest = usePrefs.getState().recordHiddenApps.filter((n) => n !== name);
+  usePrefs.getState().set({ recordHiddenApps: hidden ? [...rest, name] : rest });
+}
+
 /** The grouped menu of everything that can be recorded, or one kind of it. */
 function sourceItems(sources: RecordSources | null, only?: SourceKind): MenuItem[] {
   const current = usePrefs.getState().recordSource;
@@ -54,14 +64,34 @@ function sourceItems(sources: RecordSources | null, only?: SourceKind): MenuItem
     items.push({ label: "Apps", heading: true });
     if (!sources.appsSupported) items.push({ label: sources.unsupported ?? "Saga can't record one app here.", disabled: true });
     else if (!sources.apps.length) items.push({ label: "No apps are playing sound", disabled: true });
-    for (const a of sources.apps) {
+    const hiddenNames = new Set(usePrefs.getState().recordHiddenApps);
+    const app = (a: AppSource, hidden: boolean): MenuItem => ({
+      label: a.name,
+      icon: appIcon(a),
+      hint: a.playing ? "Playing" : undefined,
+      checked: current?.kind === "app" && current.pid === a.pid,
+      muted: hidden,
+      onSelect: set({ kind: "app", pid: a.pid, name: a.name }),
+      aside: hidden
+        ? { label: `Show ${a.name} again`, icon: <Eye size={14} />, onSelect: () => setAppHidden(a.name, false) }
+        : { label: `Hide ${a.name}`, icon: <EyeOff size={14} />, onSelect: () => setAppHidden(a.name, true) },
+    });
+    const hidden = sources.apps.filter((a) => hiddenNames.has(a.name));
+    for (const a of sources.apps) if (!hiddenNames.has(a.name)) items.push(app(a, false));
+    // Apps that never make a sound worth keeping wait at the end, folded, so the ones that do stay in reach.
+    if (hidden.length) {
       items.push({
-        label: a.name,
-        icon: appIcon(a),
-        hint: a.playing ? "Playing" : undefined,
-        checked: current?.kind === "app" && current.pid === a.pid,
-        onSelect: set({ kind: "app", pid: a.pid, name: a.name }),
+        label: "Hidden",
+        icon: showHidden ? <ChevronDown size={14} /> : <ChevronRight size={14} />,
+        hint: String(hidden.length),
+        muted: true,
+        expanded: showHidden,
+        keepOpen: true,
+        onSelect: () => {
+          showHidden = !showHidden;
+        },
       });
+      if (showHidden) for (const a of hidden) items.push(app(a, true));
     }
   }
   if (!only || only === "system") {
@@ -95,6 +125,9 @@ export function openSourceMenu(el: HTMLElement, only?: SourceKind) {
     record.setSource({ kind: "system" });
     return;
   }
+  // Hidden starts open when the app being recorded is one of them, so its tick shows.
+  const current = usePrefs.getState().recordSource;
+  showHidden = current?.kind === "app" && usePrefs.getState().recordHiddenApps.includes(current.name);
   openMenuBelow(el, () => sourceItems(useRecord.getState().sources, only));
   void record.loadSources().then((sources) => {
     if (only === "system" && sources?.systemSupported) {
@@ -135,6 +168,8 @@ export function SourceIcon({ source, size = 16 }: { source: RecordSource | null;
 export function SourceButton({ compact }: { compact?: boolean }) {
   const source = usePrefs((s) => s.recordSource);
   const sources = useRecord((s) => s.sources);
+  // Changing the source would reopen the device under a take that is being recorded.
+  const recording = useRecord((s) => s.phase === "recording");
   const name = source ? (source.kind === "app" ? source.name : source.kind === "system" ? "Everything you hear" : source.device || "Default input") : "Choose what to record";
   const detail = source ? sourceDetail(source, sources) : "";
   if (compact) {
@@ -142,9 +177,10 @@ export function SourceButton({ compact }: { compact?: boolean }) {
       <button
         type="button"
         aria-label={`Recording from ${name}. Change`}
-        title={detail ? `${name} · ${detail}` : name}
+        title={recording ? "The source can change after this take" : detail ? `${name} · ${detail}` : name}
+        disabled={recording}
         onClick={(e) => openSourceMenu(e.currentTarget)}
-        className="flex h-7 max-w-[150px] min-w-0 items-center gap-1.5 rounded-md border border-line2 bg-raised pr-1.5 pl-2 text-small text-text2 hover:bg-raised2 hover:text-text"
+        className="flex h-7 max-w-[150px] min-w-0 items-center gap-1.5 rounded-md border border-line2 bg-raised pr-1.5 pl-2 text-small text-text2 hover:bg-raised2 hover:text-text disabled:opacity-45 disabled:hover:bg-raised disabled:hover:text-text2"
       >
         <span className="grid shrink-0 place-items-center text-text2">
           <SourceIcon source={source} size={13} />
@@ -158,8 +194,10 @@ export function SourceButton({ compact }: { compact?: boolean }) {
     <button
       type="button"
       aria-label={`Recording from ${name}${detail ? `, ${detail}` : ""}. Change`}
+      title={recording ? "The source can change after this take" : undefined}
+      disabled={recording}
       onClick={(e) => openSourceMenu(e.currentTarget)}
-      className="flex h-12 w-full min-w-0 items-center gap-3 rounded-xl border border-line2 bg-raised pr-2.5 pl-2.5 text-left hover:bg-raised2"
+      className="flex h-12 w-full min-w-0 items-center gap-3 rounded-xl border border-line2 bg-raised pr-2.5 pl-2.5 text-left hover:bg-raised2 disabled:opacity-45 disabled:hover:bg-raised"
     >
       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-panel text-text2">
         <SourceIcon source={source} size={source?.kind === "app" ? 20 : 16} />
@@ -225,13 +263,25 @@ export function TakeOptionsControls() {
   const startOnSound = usePrefs((s) => s.recordStartOnSound);
   const stopAfter = usePrefs((s) => s.recordStopAfter);
   const keepGoing = usePrefs((s) => s.recordKeepGoing);
+  // Start on sound only decides how a take begins. Stop after, Threshold and Keep going also shape the take that is
+  // running, so they stay live.
+  const recording = useRecord((s) => s.phase === "recording");
   const set = (patch: Parameters<ReturnType<typeof usePrefs.getState>["set"]>[0]) => {
     usePrefs.getState().set(patch);
     useRecord.getState().optionsChanged();
   };
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
-      <Switch size="sm" label="Start on sound" checked={startOnSound} onChange={(v) => set({ recordStartOnSound: v })} className="w-full" />
+      <ThresholdField />
+      <Switch
+        size="sm"
+        label="Start on sound"
+        checked={startOnSound}
+        disabled={recording}
+        title={recording ? "This take has already started" : undefined}
+        onChange={(v) => set({ recordStartOnSound: v })}
+        className="w-full"
+      />
       <div className="flex items-center justify-between gap-2" title="Seconds of silence that end a take">
         <span className="text-ui text-text2">Stop after</span>
         <Segmented
@@ -245,6 +295,96 @@ export function TakeOptionsControls() {
       <span title="After each take, Saga arms again, so every sound becomes its own take" className="block">
         <Switch size="sm" label="Keep going" checked={keepGoing} onChange={(v) => set({ recordKeepGoing: v })} className="w-full" />
       </span>
+    </div>
+  );
+}
+
+/**
+ * The level that starts a take (and that silence falls below), as a number: Auto follows the source's noise floor and
+ * shows where that is, and typing a level, or ↑ ↓ (⇧ for 6 dB), sets it by hand. It moves with the stage's line.
+ */
+function ThresholdField() {
+  const { level, manual } = useThreshold();
+  const open = useRecord((s) => s.phase !== "idle");
+  // It only does something while a take waits for a sound or ends on silence.
+  const listening = usePrefs((s) => s.recordStartOnSound || s.recordStopAfter != null);
+  const [draft, setDraft] = useState<string | null>(null);
+  const db = Math.round(20 * Math.log10(Math.max(level, 1e-6)));
+  // Auto's level is only known while a source is open.
+  const shown = manual || open ? String(db) : "";
+  const commit = () => {
+    if (draft == null) return;
+    const text = draft.trim().replace("−", "-").replace(",", ".");
+    setDraft(null);
+    if (!text || /^auto$/i.test(text)) return setThresholdDb(null);
+    const v = Number(text);
+    // Levels are always below full scale, so "40" means -40 dB.
+    if (Number.isFinite(v)) setThresholdDb(-Math.abs(v));
+  };
+  const segment = "flex h-[22px] items-center rounded-md text-small transition-colors";
+  return (
+    <div
+      className={cx("flex items-center justify-between gap-2", !listening && "opacity-45")}
+      title={
+        listening
+          ? "A sound louder than this starts a take, and quieter than this counts as silence"
+          : "Turn on Start on sound or Stop after to use a threshold"
+      }
+    >
+      <span className="text-ui text-text2">Threshold</span>
+      <div role="group" aria-label="Threshold" className="flex shrink-0 gap-0.5 rounded-lg bg-raised p-[3px]">
+        <button
+          type="button"
+          aria-pressed={!manual}
+          title="Follow the source's noise floor"
+          onClick={() => setThresholdDb(manual ? null : db)}
+          className={cx(segment, "px-2 font-medium", manual ? "text-text2 hover:text-text" : "bg-seg text-text shadow-[0_1px_2px_rgba(0,0,0,0.12)]")}
+        >
+          Auto
+        </button>
+        <label
+          className={cx(
+            segment,
+            "gap-1 pr-2 pl-1.5 focus-within:ring-1 focus-within:ring-accent",
+            manual ? "bg-seg shadow-[0_1px_2px_rgba(0,0,0,0.12)]" : "hover:bg-raised2",
+          )}
+        >
+          <input
+            aria-label="Threshold in dB"
+            inputMode="decimal"
+            spellCheck={false}
+            placeholder="–"
+            value={draft ?? shown}
+            onFocus={(e) => {
+              setDraft(shown);
+              requestAnimationFrame(() => e.target.select());
+            }}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") {
+                e.stopPropagation();
+                setDraft(null);
+                (e.target as HTMLInputElement).blur();
+              }
+              if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                const by = (e.shiftKey ? 6 : 1) * (e.key === "ArrowUp" ? 1 : -1);
+                const typed = Number((draft ?? "").replace("−", "-"));
+                const from = draft != null && draft.trim() && Number.isFinite(typed) ? -Math.abs(typed) : db;
+                setThresholdDb(from + by);
+                setDraft(String(Math.round(Math.min(THRESHOLD_MAX_DB, Math.max(THRESHOLD_MIN_DB, from + by)))));
+              }
+            }}
+            className={cx(
+              "w-[26px] bg-transparent text-right font-mono tabular outline-none placeholder:text-text3",
+              manual ? "text-text" : "text-text3",
+            )}
+          />
+          <span className={cx("font-mono text-micro", manual ? "text-text2" : "text-text3")}>dB</span>
+        </label>
+      </div>
     </div>
   );
 }

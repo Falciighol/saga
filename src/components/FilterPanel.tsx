@@ -1,14 +1,15 @@
 import { Copy, X } from "lucide-react";
-import { useState } from "react";
-import { copyText } from "../lib/actions";
+import { useLayoutEffect, useRef, useState } from "react";
+import { clearFilters, copyText, count } from "../lib/actions";
 import { isMac } from "../lib/platform";
 import { fmtSeconds } from "../lib/format";
 import { keyFilterLabel, keyFilterToken } from "../lib/keys";
 import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
-import { EMPTY_FILTERS, useBrowse, type AdvancedFilters } from "../store/browse";
+import { useBrowse, type AdvancedFilters } from "../store/browse";
 import { KeyWheel } from "./KeyWheel";
 import { Histogram, linearScale, logScale, RangeSlider } from "./RangeSlider";
 import { CreatedFilter } from "./CreatedFilter";
+import { useElementWidth } from "./PreviewPanel";
 import { Chip, cx, SectionLabel, Segmented, Switch } from "./ui";
 
 const BPM_MAX = BPM_HIST_MIN + BPM_HIST_BINS * BPM_HIST_STEP;
@@ -75,7 +76,11 @@ function toggleIn<T>(list: T[], v: T): T[] {
   return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 }
 
-export function FilterPanel({ onClose }: { onClose: () => void }) {
+/**
+ * The filters, in a panel under the Filters button. It takes focus when it opens, so Tab starts inside it, and closes
+ * when focus leaves it. `onClose` is told whether the keyboard closed it, so focus can go back.
+ */
+export function FilterPanel({ id, section, onClose }: { id: string; section?: string | null; onClose: (fromKeyboard: boolean) => void }) {
   const f = useBrowse((s) => s.filters);
   const kind = useBrowse((s) => s.kind);
   const categories = useBrowse((s) => s.categories);
@@ -83,6 +88,32 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
   const total = useBrowse((s) => s.total);
   const setFilters = useBrowse((s) => s.setFilters);
   const [tagInput, setTagInput] = useState("");
+  const panel = useRef<HTMLDivElement>(null);
+  const [maxHeight, setMaxHeight] = useState<number>();
+  // The tempo and length graphs are drawn to the left column's width, which is fixed side by side and fills the panel
+  // when the columns stack.
+  const [column, columnWidth] = useElementWidth<HTMLDivElement>();
+  const graphWidth = columnWidth || 380;
+
+  // The panel ends above the window's bottom edge and scrolls inside, so Done and the search line stay in view.
+  useLayoutEffect(() => {
+    const fit = () => {
+      const el = panel.current;
+      if (el) setMaxHeight(Math.max(240, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 12)));
+    };
+    fit();
+    panel.current?.focus({ preventScroll: true });
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+
+  // Opened from a pill: start at that pill's section, once the panel has its height and can scroll.
+  const scrolledTo = useRef(false);
+  useLayoutEffect(() => {
+    if (!section || maxHeight == null || scrolledTo.current) return;
+    scrolledTo.current = true;
+    panel.current?.querySelector(`[data-section="${section}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [section, maxHeight]);
 
   const bpmBinSelected = (i: number) => {
     const center = BPM_HIST_MIN + (i + 0.5) * BPM_HIST_STEP;
@@ -109,27 +140,36 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div
+      ref={panel}
+      id={id}
       role="dialog"
       aria-label="Filters"
-      className="animate-pop absolute top-full left-3 z-40 mt-1 flex w-[832px] flex-col overflow-hidden rounded-2xl border border-line2 bg-panel shadow-pop"
+      tabIndex={-1}
+      style={{ maxHeight }}
+      className="animate-pop absolute top-full left-0 z-40 mt-3 flex w-[832px] max-w-[calc(100cqw-2rem)] flex-col overflow-hidden rounded-2xl border border-line2 bg-panel shadow-pop"
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.stopPropagation();
-          onClose();
+          onClose(true);
         }
       }}
+      onBlur={(e) => {
+        // Tabbing past the last control (or Shift-Tabbing out) closes it, like a menu. A blur with nowhere to go, such
+        // as switching to the DAW, keeps it open.
+        if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget)) onClose(false);
+      }}
     >
-      <div className="flex gap-10 px-6 pt-5 pb-5">
-        <div className="flex w-[380px] shrink-0 flex-col gap-6">
-          <section className="flex flex-col gap-2.5">
+      <div className="flex min-h-0 gap-10 overflow-y-auto px-6 pt-5 pb-5 @max-[820px]:flex-col @max-[820px]:gap-6 @max-[520px]:px-4">
+        <div ref={column} className="flex w-[380px] shrink-0 flex-col gap-6 @max-[820px]:w-full">
+          <section data-section="tempo" className="flex flex-col gap-2.5">
             <div className="flex items-baseline justify-between">
               <SectionLabel>Tempo</SectionLabel>
               <span className="font-mono text-ui tabular">{tempoLabel(f) ? `${tempoLabel(f)} BPM` : <span className="text-text3">Any</span>}</span>
             </div>
-            <Histogram counts={facets?.bpmHist ?? []} width={380} height={48} isSelected={bpmBinSelected} />
+            <Histogram counts={facets?.bpmHist ?? []} width={graphWidth} height={48} isSelected={bpmBinSelected} />
             <RangeSlider
               label="Tempo"
-              width={380}
+              width={graphWidth}
               scale={bpmScale}
               round={Math.round}
               value={[f.bpmMin, f.bpmMax]}
@@ -153,15 +193,15 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             <Switch checked={f.halfDouble} onChange={(v) => setFilters({ halfDouble: v })} label="Include half and double time" />
           </section>
 
-          <section className="flex flex-col gap-2.5">
+          <section data-section="length" className="flex flex-col gap-2.5">
             <div className="flex items-baseline justify-between">
               <SectionLabel>Length</SectionLabel>
               <span className="font-mono text-ui tabular">{lengthLabel(f) ?? <span className="text-text3">Any</span>}</span>
             </div>
-            <Histogram counts={facets?.durHist ?? []} width={380} height={36} isSelected={durBinSelected} />
+            <Histogram counts={facets?.durHist ?? []} width={graphWidth} height={36} isSelected={durBinSelected} />
             <RangeSlider
               label="Length"
-              width={380}
+              width={graphWidth}
               scale={durScale}
               round={roundSeconds}
               value={[f.durMin, f.durMax]}
@@ -179,7 +219,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
-          <section className="flex flex-col gap-2.5">
+          <section data-section="audio" className="flex flex-col gap-2.5">
             <SectionLabel>Audio</SectionLabel>
             <div className="flex items-center gap-3">
               <span className="w-16 shrink-0 text-ui text-text2">Channels</span>
@@ -197,7 +237,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div className="flex items-center gap-3">
               <span className="w-16 shrink-0 text-ui text-text2">Format</span>
-              <div className="flex gap-0">
+              <div className="flex flex-wrap gap-0">
                 {FORMATS.map((x) => (
                   <Chip key={x} mono on={f.formats.includes(x)} onClick={() => setFilters({ formats: toggleIn(f.formats, x) })}>
                     {x.toUpperCase()}
@@ -207,7 +247,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             </div>
             <div className="flex items-center gap-3">
               <span className="w-16 shrink-0 text-ui text-text2">Rate</span>
-              <div className="flex gap-0.5">
+              <div className="flex flex-wrap gap-0.5">
                 {RATES.map((r) => (
                   <Chip key={r} mono on={f.sampleRates.includes(r)} onClick={() => setFilters({ sampleRates: toggleIn(f.sampleRates, r) })}>
                     {r / 1000}k
@@ -218,8 +258,8 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
           </section>
         </div>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-6">
-          <section className="flex flex-col gap-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-6 @max-[820px]:flex-none">
+          <section data-section="key" className="flex flex-col gap-3">
             <div className="flex items-baseline justify-between">
               <SectionLabel>Key</SectionLabel>
               <span className="text-ui">{f.key ? keyFilterLabel(f.key) : <span className="text-text3">Any</span>}</span>
@@ -265,7 +305,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             </div>
           </section>
 
-          <section className="flex flex-col gap-2.5">
+          <section data-section="tags" className="flex flex-col gap-2.5">
             <SectionLabel>Tags</SectionLabel>
             {(f.tags.length > 0 || f.excludeTags.length > 0) && (
               <div className="flex flex-wrap gap-1">
@@ -307,7 +347,7 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
                   <button
                     key={t}
                     type="button"
-                    title={`${n} samples — ${isMac ? "⌥" : "Alt"}-click to exclude`}
+                    title={`${count(n, "sample")} — ${isMac ? "⌥" : "Alt"}-click to exclude`}
                     onClick={(e) => addTag(e.altKey ? `-${t}` : t)}
                     className="h-6 rounded-md px-2 text-small text-text2 hover:bg-raised hover:text-text"
                   >
@@ -318,25 +358,27 @@ export function FilterPanel({ onClose }: { onClose: () => void }) {
             )}
           </section>
 
-          <CreatedFilter />
+          <div data-section="created">
+            <CreatedFilter />
+          </div>
         </div>
       </div>
 
-      <footer className="flex h-[50px] items-center gap-3 border-t border-line bg-bg pr-3 pl-6">
-        <SectionLabel className="shrink-0">As a search</SectionLabel>
+      <footer className="flex h-[50px] shrink-0 items-center gap-3 border-t border-line bg-bg pr-3 pl-6 @max-[520px]:pl-4">
+        <SectionLabel className="shrink-0 @max-[640px]:hidden">As a search</SectionLabel>
         <code className="min-w-0 flex-1 truncate font-mono text-ui text-text">
           {syntax || <span className="text-text3">{f.createdFrom != null || f.createdTo != null ? "Date created can't be typed as a search yet" : "No filters yet"}</span>}
         </code>
-        <span className="font-mono text-small text-text3 tabular">{total != null ? `${total.toLocaleString("en-US")} match` : ""}</span>
+        <span className="font-mono text-small text-text3 tabular">{total != null ? (total === 1 ? "1 match" : `${total.toLocaleString("en-US")} matches`) : ""}</span>
         {syntax && (
           <button type="button" onClick={() => void copyText(syntax, "Search")} className="flex h-[30px] items-center gap-1.5 rounded-md px-2.5 text-small text-text2 hover:bg-raised">
             <Copy size={14} /> Copy
           </button>
         )}
-        <button type="button" onClick={() => setFilters(EMPTY_FILTERS)} className="h-[30px] rounded-md px-2.5 text-small text-text3 hover:bg-raised hover:text-text">
-          Clear
+        <button type="button" onClick={clearFilters} className="h-[30px] rounded-md px-2.5 text-small whitespace-nowrap text-text3 hover:bg-raised hover:text-text">
+          Clear filters
         </button>
-        <button type="button" onClick={onClose} className="h-[30px] rounded-lg bg-accent px-3.5 text-small font-semibold text-on-accent">
+        <button type="button" onClick={(e) => onClose(e.detail === 0)} className="h-[30px] rounded-lg bg-accent px-3.5 text-small font-semibold text-on-accent">
           Done
         </button>
       </footer>

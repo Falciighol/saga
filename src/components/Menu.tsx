@@ -11,6 +11,8 @@ export type MenuItem =
       icon?: ReactNode;
       hint?: string;
       checked?: boolean;
+      /** The ticked item is one choice among its neighbours (a sort order), not something switched on and off. */
+      radio?: boolean;
       danger?: boolean;
       disabled?: boolean;
       onSelect?: () => void;
@@ -20,6 +22,14 @@ export type MenuItem =
       keepOpen?: boolean;
       /** A small title over the items after it, not something to choose. */
       heading?: boolean;
+      /** Drawn quieter: there, but set aside (a hidden app). */
+      muted?: boolean;
+      /** The row folds the rows after it in and out, like a section's heading. */
+      expanded?: boolean;
+      /** A second action on the same thing (hiding it, say), as a small button at the row's end that shows when the
+       *  row is pointed at or focused; → reaches it from the keyboard. It leaves the menu open and redraws it, so the
+       *  menu needs a function that builds its items. */
+      aside?: { label: string; icon: ReactNode; onSelect: () => void };
     };
 
 /** A menu's items, or a function that builds them, so a menu that stays open can show what changed. */
@@ -125,17 +135,27 @@ function MenuList({
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ rect: Box; side: Side } | null>(null);
   const [sub, setSub] = useState<{ index: number; y: number; clicked: boolean; inPlace: boolean; keyboard: boolean } | null>(null);
-  // The row to focus once a submenu closes, so ← lands back where → left.
-  const refocus = useRef<number | null>(null);
+  // The row to focus once a submenu closes, so ← lands back where → left, or once an aside action moved its row away
+  // (a hidden app): the row that came after it, found by its label since rows shift.
+  const refocus = useRef<{ index: number; label?: string } | null>(null);
 
-  // Measures the menu, hidden at the window's corner, and places it. This runs once: a menu that needs a new place
-  // is mounted again (see the keys below).
+  // Measures the menu at the window's corner, where nothing squeezes it, and places it. It runs again when the items
+  // change, since a menu that stays open can grow (a list that finishes loading after the menu opened) and must still
+  // fit the window. A menu that needs a new place for any other reason is mounted again (see the keys below).
   useLayoutEffect(() => {
     const el = ref.current!;
+    const { left: wasLeft, top: wasTop } = el.style;
+    el.style.left = "0px";
+    el.style.top = "0px";
     const w = el.offsetWidth;
     const h = el.offsetHeight;
+    // Put it back as React left it, so React's own update moves it, and focus and scrolling inside stay put.
+    el.style.left = wasLeft;
+    el.style.top = wasTop;
     const vw = window.innerWidth;
-    const top = Math.max(EDGE, Math.min(place.y, window.innerHeight - EDGE - h));
+    // Placed again, it keeps its top unless it grew past the window's bottom: a row taken out lets the rows under it
+    // move up beneath the pointer, the way a list does, rather than the rows above sliding down.
+    const top = Math.max(EDGE, Math.min(box ? box.rect.top : place.y, window.innerHeight - EDGE - h));
     const at = (left: number, side: Side) => ({ rect: { left, top, right: left + w, bottom: top + h }, side });
     if (!("parent" in place)) {
       const left = place.side === "right" ? place.x : place.x - w;
@@ -154,7 +174,7 @@ function MenuList({
     const pick = (nested && options.find(roomBeyond)) || options[0];
     if (pick) setBox(pick);
     else onNoRoom?.();
-  }, []);
+  }, [items]);
 
   useEffect(() => {
     if (box && autoFocus) rows()[0]?.focus();
@@ -163,14 +183,21 @@ function MenuList({
 
   useEffect(() => {
     if (sub || refocus.current == null) return;
-    ref.current?.querySelector<HTMLElement>(`[data-index="${refocus.current}"]`)?.focus();
+    const { index, label } = refocus.current;
     refocus.current = null;
+    const list = rows();
+    const labelOf = (row: HTMLElement) => {
+      const item = items[Number(row.dataset.index)];
+      return item && item !== "separator" ? item.label : undefined;
+    };
+    const named = label != null ? list.find((row) => labelOf(row) === label) : undefined;
+    (named ?? list.find((row) => Number(row.dataset.index) >= index) ?? list.at(-1))?.focus();
   });
 
-  const rows = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>(":scope > button:not(:disabled)") ?? [])];
+  const rows = () => [...(ref.current?.querySelectorAll<HTMLButtonElement>("[data-row]:not(:disabled)") ?? [])];
 
   const closeSub = () => {
-    if (sub) refocus.current = sub.index;
+    if (sub) refocus.current = { index: sub.index };
     setSub(null);
   };
 
@@ -201,7 +228,11 @@ function MenuList({
   // closes every menu, and Tab leaves the menu.
   const onKeyDown = (e: ReactKeyboardEvent) => {
     const list = rows();
-    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // On a row's aside button, the keys go on from its row.
+    const onAside = active?.dataset.aside != null;
+    const current = onAside ? active!.parentElement?.querySelector<HTMLButtonElement>("[data-row]") : active;
+    const at = list.indexOf(current as HTMLButtonElement);
     const go = (i: number) => list[(i + list.length) % list.length]?.focus();
     const row = at >= 0 ? list[at] : null;
     const index = row?.dataset.index != null ? Number(row.dataset.index) : -1;
@@ -211,6 +242,9 @@ function MenuList({
     else if (e.key === "Home") go(0);
     else if (e.key === "End") go(-1);
     else if (e.key === "ArrowRight" && row && item && item !== "separator" && item.submenu) openSub(index, row, true, true);
+    else if (e.key === "ArrowRight" && row && !onAside && item && item !== "separator" && item.aside) {
+      row.parentElement?.querySelector<HTMLElement>("[data-aside]")?.focus();
+    } else if (e.key === "ArrowLeft" && onAside && row) row.focus();
     else if (e.key === "ArrowLeft" && (back || onLeave)) (back ? back.onBack : onLeave!)();
     else if (e.key === "Tab") onDone();
     else return;
@@ -223,10 +257,12 @@ function MenuList({
       <div
         ref={ref}
         role="menu"
-        className="animate-pop fixed z-[70] max-h-[calc(100vh-16px)] max-w-[calc(100vw-16px)] overflow-y-auto rounded-xl border border-line2 bg-panel p-1 shadow-pop"
+        className="animate-pop fixed z-[70] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-xl border border-line2 bg-panel p-1 shadow-pop"
         style={{
           ...(box ? { left: box.rect.left, top: box.rect.top } : { left: 0, top: 0, visibility: "hidden" }),
           minWidth: Math.max(180, minWidth && minWidth > 0 ? minWidth : 0),
+          // The same window height the placement measures against, so a long menu always fits and scrolls inside.
+          maxHeight: window.innerHeight - 2 * EDGE,
         }}
         onContextMenu={(e) => e.preventDefault()}
         onKeyDown={onKeyDown}
@@ -236,6 +272,7 @@ function MenuList({
             <button
               type="button"
               role="menuitem"
+              data-row=""
               onMouseEnter={(e) => {
                 setSub(null);
                 followPointer(e.currentTarget);
@@ -251,21 +288,24 @@ function MenuList({
             <div className="mx-2 my-1 h-px bg-line" />
           </>
         )}
-        {items.map((item, i) =>
-          item === "separator" ? (
-            <div key={i} className="mx-2 my-1 h-px bg-line" />
-          ) : item.heading ? (
-            <div key={i} role="presentation" className="px-2.5 pt-2 pb-1 text-micro font-medium text-text3 first:pt-1">
-              {item.label}
-            </div>
-          ) : (
+        {items.map((item, i) => {
+          if (item === "separator") return <div key={i} className="mx-2 my-1 h-px bg-line" />;
+          if (item.heading) {
+            return (
+              <div key={i} role="presentation" className="px-2.5 pt-2 pb-1 text-micro font-medium text-text3 first:pt-1">
+                {item.label}
+              </div>
+            );
+          }
+          const row = (
             <button
               key={i}
               type="button"
-              role={item.checked != null ? "menuitemcheckbox" : "menuitem"}
+              role={item.checked == null ? "menuitem" : item.radio ? "menuitemradio" : "menuitemcheckbox"}
               aria-checked={item.checked != null ? item.checked : undefined}
               aria-haspopup={item.submenu ? "menu" : undefined}
-              aria-expanded={item.submenu ? sub?.index === i : undefined}
+              aria-expanded={item.submenu ? sub?.index === i : item.expanded}
+              data-row=""
               data-index={i}
               disabled={item.disabled}
               onMouseEnter={(e) => {
@@ -283,20 +323,65 @@ function MenuList({
                 else onDone();
               }}
               className={cx(
-                "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui whitespace-nowrap disabled:opacity-40",
-                item.danger ? "text-[#E5705E] hover:bg-raised focus-visible:bg-raised" : "text-text hover:bg-raised focus-visible:bg-raised",
+                "flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui whitespace-nowrap hover:bg-raised focus-visible:bg-raised disabled:opacity-40",
+                item.danger ? "text-[#E5705E]" : item.muted ? "text-text2" : "text-text",
                 sub?.index === i && "bg-raised",
               )}
             >
-              <span className="grid w-4 shrink-0 place-items-center text-text3">
+              <span className={cx("grid w-4 shrink-0 place-items-center text-text3", item.muted && !item.checked && "opacity-55")}>
                 {item.checked ? <Check size={14} className="text-accent-ink" /> : item.icon}
               </span>
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
-              {item.hint && <span className="shrink-0 font-mono text-micro text-text3">{item.hint}</span>}
+              {/* The aside button shows over the end of the row, where the hint steps aside for it. */}
+              {(item.hint || item.aside) && (
+                <span
+                  className={cx(
+                    "shrink-0 text-right font-mono text-micro text-text3",
+                    item.aside && "min-w-5 group-focus-within/row:invisible group-hover/row:invisible",
+                  )}
+                >
+                  {item.hint}
+                </span>
+              )}
               {item.submenu && <ChevronRight size={14} className="shrink-0 text-text3" />}
             </button>
-          ),
-        )}
+          );
+          if (!item.aside) return row;
+          const aside = item.aside;
+          return (
+            <div key={i} role="none" className="group/row relative">
+              {row}
+              <button
+                type="button"
+                role="menuitem"
+                data-aside=""
+                aria-label={aside.label}
+                title={aside.label}
+                // A click doesn't take focus, so the keyboard's place in the menu stays where it was.
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setSub(null)}
+                onClick={(e) => {
+                  if (document.activeElement === e.currentTarget) {
+                    const list = rows();
+                    const at = list.findIndex((row) => row.dataset.index === String(i));
+                    const after = list[at + 1] ?? list[at - 1];
+                    const next = after ? items[Number(after.dataset.index)] : undefined;
+                    refocus.current = { index: i, label: next && next !== "separator" ? next.label : undefined };
+                  }
+                  aside.onSelect();
+                  useMenu.getState().refresh();
+                }}
+                className={cx(
+                  "absolute top-1 right-1.5 grid h-6 w-6 place-items-center rounded-md text-text3 opacity-0 outline-none",
+                  "group-focus-within/row:opacity-100 group-hover/row:opacity-100",
+                  "hover:bg-raised2 hover:text-text focus-visible:bg-raised2 focus-visible:text-text",
+                )}
+              >
+                {aside.icon}
+              </button>
+            </div>
+          );
+        })}
       </div>
       {sub && submenu && box && (
         <MenuList
@@ -342,7 +427,7 @@ export function MenuHost() {
         const had = document.activeElement;
         if (!restore.current && had instanceof HTMLElement && (had.matches(":focus-visible") || isTextInput(had))) restore.current = had;
         const menus = document.querySelectorAll<HTMLElement>('[role="menu"]');
-        const list = menus[menus.length - 1]?.querySelectorAll<HTMLButtonElement>(":scope > button:not(:disabled)");
+        const list = menus[menus.length - 1]?.querySelectorAll<HTMLButtonElement>("[data-row]:not(:disabled)");
         list?.[e.key === "ArrowDown" ? 0 : list.length - 1]?.focus();
       }
     };

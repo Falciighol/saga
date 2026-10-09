@@ -97,7 +97,7 @@ export const live = {
   bars: new Float32Array(LIVE_BARS),
   /** Bars held, up to LIVE_BARS. */
   count: 0,
-  /** Bars ever pushed since arming. */
+  /** Bars ever pushed. It only grows, so the stage can tell new bars from a clear. */
   total: 0,
   /** `total` where the take being recorded begins (its pre-roll included), or -1. */
   takeStart: -1,
@@ -118,8 +118,26 @@ function pushBars(bars: number[]) {
 function clearBars() {
   live.bars.fill(0);
   live.count = 0;
-  live.total = 0;
   live.takeStart = -1;
+}
+
+/** How far the level that starts a take can be set, in dB. */
+export const THRESHOLD_MIN_DB = -60;
+export const THRESHOLD_MAX_DB = -6;
+
+/** Sets the level that starts a take, in whole dB, or null to follow the source's noise floor. */
+export function setThresholdDb(db: number | null) {
+  const clamped = db == null ? null : Math.round(Math.min(THRESHOLD_MAX_DB, Math.max(THRESHOLD_MIN_DB, db)));
+  if (clamped === usePrefs.getState().recordThresholdDb) return;
+  usePrefs.getState().set({ recordThresholdDb: clamped });
+  useRecord.getState().optionsChanged();
+}
+
+/** The level that starts a take, 0–1: the one set by hand, or the engine's, which follows the noise floor. */
+export function useThreshold(): { level: number; manual: boolean } {
+  const manualDb = usePrefs((s) => s.recordThresholdDb);
+  const auto = useRecord((s) => s.status?.threshold);
+  return manualDb != null ? { level: 10 ** (manualDb / 20), manual: true } : { level: auto ?? 10 ** (-48 / 20), manual: false };
 }
 
 export function takeOptions(): TakeOptions {
@@ -387,6 +405,8 @@ export const useRecord = create<RecordState>((set, get) => ({
 
   onStatus: (s) => {
     const before = get().phase;
+    // A finished take is in the tray now, so the stage starts clean for the next one (or goes quiet).
+    if (before === "recording" && s.state !== "recording") clearBars();
     pushBars(s.bars);
     if (s.state === "recording" && before !== "recording") live.takeStart = Math.max(0, live.total - s.bars.length - PRE_ROLL_BARS);
     if (s.state !== "recording") live.takeStart = -1;

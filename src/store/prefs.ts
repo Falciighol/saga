@@ -66,6 +66,8 @@ export interface PrefValues {
   recordKeepGoing: boolean;
   /** The level that starts a take, in dBFS; null follows the source's noise floor. */
   recordThresholdDb: number | null;
+  /** Apps, by name, folded under Hidden in the list of what to record, for ones that never make sound worth keeping. */
+  recordHiddenApps: string[];
 }
 
 interface Prefs extends PrefValues {
@@ -103,6 +105,7 @@ export const DEFAULT_PREFS: PrefValues = {
   recordStopAfter: 2,
   recordKeepGoing: false,
   recordThresholdDb: null,
+  recordHiddenApps: [],
 };
 
 export const usePrefs = create<Prefs>()(

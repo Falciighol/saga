@@ -1,8 +1,9 @@
-import { FolderOpen, X } from "lucide-react";
+import { Eye, FolderOpen, X } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { reveal } from "../../lib/actions";
 import { isMac, revealLabel } from "../../lib/platform";
 import type { TakeFormat, TakesRetention } from "../../lib/types";
+import { usePrefs } from "../../store/prefs";
 import { useRecord } from "../../store/record";
 import { cx, IconButton, SectionLabel, Segmented } from "../ui";
 
@@ -105,6 +106,26 @@ function Row({ label, hint, children }: { label: string; hint?: ReactNode; child
   );
 }
 
+/** The apps folded under Hidden in the list of what to record, with a way to bring them all back. */
+function HiddenApps() {
+  const hidden = usePrefs((s) => s.recordHiddenApps);
+  return (
+    <Row
+      label="Hidden apps"
+      hint={hidden.length ? hidden.join(", ") : "Apps that never make a sound worth keeping. Point at one in the list of what to record and click its eye to hide it."}
+    >
+      <button
+        type="button"
+        disabled={!hidden.length}
+        onClick={() => usePrefs.getState().set({ recordHiddenApps: [] })}
+        className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-line2 bg-raised px-3 text-ui text-text hover:bg-raised2 disabled:opacity-50"
+      >
+        <Eye size={14} /> Show all
+      </button>
+    </Row>
+  );
+}
+
 const FORMATS: { value: TakeFormat; label: string }[] = [
   { value: "24", label: "24-bit" },
   { value: "float", label: "32-bit float" },
@@ -116,7 +137,7 @@ const RETENTION: { value: TakesRetention; label: string }[] = [
   { value: "quit", label: "Move to the Trash when Saga quits" },
 ];
 
-/** Settings › Recording: the shortcut from anywhere, the file format, unsaved takes and where saved ones go. */
+/** Settings › Recording: the shortcut from anywhere, hidden apps, the file format, unsaved takes and where saved ones go. */
 export function RecordingSection() {
   const settings = useRecord((s) => s.settings);
   useEffect(() => {
@@ -128,6 +149,7 @@ export function RecordingSection() {
       <Row label="Shortcut from anywhere" hint="Arms, records and stops even while your DAW has focus. Pick keys your DAW doesn't use.">
         <ShortcutPicker />
       </Row>
+      <HiddenApps />
       <Row label="File format" hint="WAV at the source's own sample rate, never resampled. 32-bit float keeps sound that goes past full scale in other apps.">
         <Segmented
           label="File format"

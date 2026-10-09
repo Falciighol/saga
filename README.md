@@ -139,8 +139,10 @@ tempo and key in its name (`Arp Loop (124 BPM, Bm, reversed).wav`).
 
 Press `R` for the Record panel and pick what to record: an input (a mic, or an instrument on any
 channel or pair of your interface), one app (a browser tab, a player, a plugin's standalone), or
-everything you hear except Saga's own sounds. Press `R` again to arm. The take starts on the first
-sound, keeps its attack, and ends after a moment of silence. With **Keep going**, every sound
+everything you hear except Saga's own sounds. Apps you'll never record from can be hidden from that
+list: point at one and click its eye, and it waits under Hidden. Press `R` again to arm. The take starts on the first
+sound, keeps its attack, and ends after a moment of silence. The threshold for both follows the
+source's noise floor, or type a level in dB, or drag its line on the waveform. With **Keep going**, every sound
 becomes its own take, so eight hits on a drum machine give you eight takes.
 
 A take is a sample straight away: Saga trims the silence around it and finds its tempo and key

@@ -7,25 +7,25 @@ use base64::Engine as _;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::AllocAnyThread;
-use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication};
+use crossbeam_channel::{bounded, RecvTimeoutError, Sender};
+use objc2_app_kit::{NSApplicationActivationPolicy, NSBitmapImageFileType, NSBitmapImageRep, NSRunningApplication};
 use objc2_core_audio::{
     kAudioAggregateDeviceIsPrivateKey, kAudioAggregateDeviceIsStackedKey, kAudioAggregateDeviceMainSubDeviceKey, kAudioAggregateDeviceNameKey,
     kAudioAggregateDeviceSubDeviceListKey, kAudioAggregateDeviceTapAutoStartKey, kAudioAggregateDeviceTapListKey, kAudioAggregateDeviceUIDKey,
     kAudioDevicePropertyDeviceUID, kAudioHardwarePropertyDefaultSystemOutputDevice, kAudioHardwarePropertyProcessObjectList,
     kAudioHardwarePropertyTranslatePIDToProcessObject, kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
-    kAudioProcessPropertyIsRunningOutput, kAudioProcessPropertyPID, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
-    kAudioTapPropertyFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop,
+    kAudioProcessPropertyBundleID, kAudioProcessPropertyIsRunningOutput, kAudioProcessPropertyPID, kAudioSubDeviceUIDKey, kAudioSubTapDriftCompensationKey, kAudioSubTapUIDKey,
+    kAudioTapPropertyDescription, kAudioTapPropertyFormat, AudioDeviceCreateIOProcID, AudioDeviceDestroyIOProcID, AudioDeviceIOProcID, AudioDeviceStart, AudioDeviceStop,
     AudioHardwareCreateAggregateDevice, AudioHardwareCreateProcessTap, AudioHardwareDestroyAggregateDevice, AudioHardwareDestroyProcessTap,
-    AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectPropertyAddress, CATapDescription, CATapMuteBehavior,
+    AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectID, AudioObjectSetPropertyData, AudioObjectPropertyAddress, CATapDescription, CATapMuteBehavior,
 };
 use objc2_core_audio_types::{kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
 use objc2_core_foundation::CFDictionary;
 use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSOperatingSystemVersion, NSProcessInfo, NSString, NSUUID};
 use std::collections::HashMap;
-use std::ffi::{c_void, CStr};
+use std::ffi::{c_char, c_void, CStr};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -86,31 +86,82 @@ unsafe fn get_string(object: AudioObjectID, selector: u32) -> Option<Retained<NS
     Retained::from_raw(raw)
 }
 
-/// Every process Core Audio knows, with its pid and whether it's making sound.
-unsafe fn processes() -> Vec<(AudioObjectID, i32, bool)> {
+/// A process connected to Core Audio. Most never play anything: system services and apps that only
+/// looked at the devices are listed too.
+struct Client {
+    object: AudioObjectID,
+    pid: i32,
+    /// Core Audio knows it even for helpers that aren't apps of their own.
+    bundle: Option<String>,
+    /// Sending sound to an output right now.
+    playing: bool,
+}
+
+/// Every process Core Audio knows.
+unsafe fn clients() -> Vec<Client> {
     get_list(SYSTEM, kAudioHardwarePropertyProcessObjectList)
         .into_iter()
         .filter_map(|object| {
             let pid: i32 = get(object, kAudioProcessPropertyPID, None)?;
+            let bundle = get_string(object, kAudioProcessPropertyBundleID).map(|s| s.to_string()).filter(|s| !s.is_empty());
             let playing = get::<u32>(object, kAudioProcessPropertyIsRunningOutput, None).unwrap_or(0) != 0;
-            Some((object, pid, playing))
+            Some(Client { object, pid, bundle, playing })
         })
         .collect()
 }
 
-/// The app a process belongs to: itself, or for a helper ("com.google.Chrome.helper.renderer"),
-/// the running app whose bundle identifier it extends.
-fn owning_app(pid: i32) -> Option<Retained<NSRunningApplication>> {
-    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
-    let Some(id) = app.bundleIdentifier().map(|s| s.to_string()) else { return Some(app) };
-    let parts: Vec<&str> = id.split('.').collect();
-    for n in (2..parts.len()).rev() {
-        let prefix = NSString::from_str(&parts[..n].join("."));
-        if let Some(owner) = NSRunningApplication::runningApplicationsWithBundleIdentifier(&prefix).firstObject() {
-            return Some(owner);
+/// The process macOS holds responsible for `pid`: the app that started a helper or an XPC service,
+/// such as a browser's audio process or WebKit's media process. Activity Monitor groups processes
+/// the same way. The function is private, so it's looked up at run time, and without it helpers are
+/// matched by bundle identifier alone.
+fn responsible_pid(pid: i32) -> Option<i32> {
+    type Responsible = unsafe extern "C" fn(i32) -> i32;
+    extern "C" {
+        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    }
+    const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    static FUNCTION: OnceLock<Option<Responsible>> = OnceLock::new();
+    let function = FUNCTION.get_or_init(|| {
+        // SAFETY: dlsym with RTLD_DEFAULT only reads the loaded images; a found symbol has this signature.
+        let symbol = unsafe { dlsym(RTLD_DEFAULT, c"responsibility_get_pid_responsible_for_pid".as_ptr()) };
+        (!symbol.is_null()).then(|| unsafe { std::mem::transmute::<*mut c_void, Responsible>(symbol) })
+    });
+    // SAFETY: takes any pid and returns -1 for one it doesn't know.
+    let responsible = unsafe { (*function)?(pid) };
+    (responsible > 0).then_some(responsible)
+}
+
+fn running_app(pid: i32) -> Option<Retained<NSRunningApplication>> {
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid).filter(|a| !a.isTerminated())
+}
+
+/// The app a process plays for. A helper counts as the app responsible for it or, failing that, as
+/// the running app whose bundle identifier its own extends ("com.google.Chrome.helper" →
+/// "com.google.Chrome"). Helpers are often not apps themselves, so they're never required to be one.
+fn owner(client: &Client) -> Option<Retained<NSRunningApplication>> {
+    if let Some(app) = responsible_pid(client.pid).filter(|&pid| pid != client.pid).and_then(running_app) {
+        return Some(app);
+    }
+    let own = running_app(client.pid);
+    if own.as_ref().is_some_and(|a| a.activationPolicy() == NSApplicationActivationPolicy::Regular) {
+        return own;
+    }
+    if let Some(id) = client.bundle.clone().or_else(|| own.as_ref().and_then(|a| a.bundleIdentifier()).map(|s| s.to_string())) {
+        let parts: Vec<&str> = id.split('.').collect();
+        for n in (2..parts.len()).rev() {
+            let prefix = NSString::from_str(&parts[..n].join("."));
+            let apps = NSRunningApplication::runningApplicationsWithBundleIdentifier(&prefix);
+            if let Some(app) = apps.iter().find(|a| !a.isTerminated()) {
+                return Some(app);
+            }
         }
     }
-    Some(app)
+    own
+}
+
+/// The Core Audio objects of an app and every helper that plays for it.
+unsafe fn objects_of(app_pid: i32) -> Vec<AudioObjectID> {
+    clients().into_iter().filter(|c| c.pid == app_pid || owner(c).is_some_and(|a| a.processIdentifier() == app_pid)).map(|c| c.object).collect()
 }
 
 /// The app's icon as a PNG data URL, from the representation nearest 32 pixels wide.
@@ -131,29 +182,35 @@ fn icon_png(app: &NSRunningApplication) -> Option<String> {
     Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png.to_vec())))
 }
 
-/// Apps with sound sessions, the ones making sound first. Helpers count as their app; Saga is left out.
+/// Apps connected to Core Audio, the ones making sound first. Helpers count as their app. Apps in
+/// the Dock are always listed and menu bar apps only while they play. Saga, background services and
+/// system agents (Control Center, universalaccessd) never are.
 pub fn apps() -> Vec<AppSource> {
     let own = std::process::id() as i32;
-    let mut by_app: HashMap<i32, AppSource> = HashMap::new();
+    let mut by_app: HashMap<i32, (Retained<NSRunningApplication>, bool)> = HashMap::new();
     // SAFETY: plain property reads on Core Audio objects.
-    for (_, pid, playing) in unsafe { processes() } {
-        if pid <= 0 || pid == own {
+    for client in unsafe { clients() } {
+        if client.pid <= 0 || client.pid == own {
             continue;
         }
-        let Some(app) = owning_app(pid) else { continue };
+        let Some(app) = owner(&client) else { continue };
         let app_pid = app.processIdentifier();
-        if app_pid == own {
-            continue;
-        }
-        match by_app.get_mut(&app_pid) {
-            Some(a) => a.playing |= playing,
-            None => {
-                let name = app.localizedName().map(|n| n.to_string()).unwrap_or_else(|| format!("Process {app_pid}"));
-                by_app.insert(app_pid, AppSource { pid: app_pid as u32, name, icon: icon_png(&app), playing });
-            }
+        if app_pid != own {
+            by_app.entry(app_pid).or_insert((app, false)).1 |= client.playing;
         }
     }
-    let mut apps: Vec<AppSource> = by_app.into_values().collect();
+    let mut apps: Vec<AppSource> = by_app
+        .into_iter()
+        .filter(|(_, (app, playing))| match app.activationPolicy() {
+            NSApplicationActivationPolicy::Regular => true,
+            NSApplicationActivationPolicy::Accessory => *playing,
+            _ => false,
+        })
+        .map(|(pid, (app, playing))| {
+            let name = app.localizedName().map(|n| n.to_string()).unwrap_or_else(|| format!("Process {pid}"));
+            AppSource { pid: pid as u32, name, icon: icon_png(&app), playing }
+        })
+        .collect();
     apps.sort_by(|a, b| b.playing.cmp(&a.playing).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     apps
 }
@@ -162,6 +219,8 @@ pub fn apps() -> Vec<AppSource> {
 struct Io {
     sink: Sink,
     interleaved: bool,
+    /// How many of the input buffers are the tap's: one when interleaved, else one per channel.
+    tap_buffers: usize,
 }
 
 unsafe extern "C-unwind" fn io_proc(
@@ -175,7 +234,11 @@ unsafe extern "C-unwind" fn io_proc(
 ) -> i32 {
     let io = &*(client as *const Io);
     let list = input.as_ref();
-    let buffers = std::slice::from_raw_parts(list.mBuffers.as_ptr(), list.mNumberBuffers as usize);
+    let all = std::slice::from_raw_parts(list.mBuffers.as_ptr(), list.mNumberBuffers as usize);
+    // The aggregate's inputs are the output device's own inputs first, then the tap's. An audio
+    // interface brings its mic and line inputs, and a virtual device its copy of everything playing
+    // at the device's volume, so only the last buffers are the app.
+    let buffers = &all[all.len().saturating_sub(io.tap_buffers)..];
     let Some(first) = buffers.first() else { return 0 };
     if first.mData.is_null() {
         return 0;
@@ -211,13 +274,18 @@ struct Tap {
     device: AudioObjectID,
     proc_id: AudioDeviceIOProcID,
     io: *mut Io,
-    stop: Arc<AtomicBool>,
+    /// Dropping it wakes the watcher, which ends.
+    stop: Option<Sender<()>>,
     watcher: Option<JoinHandle<()>>,
 }
 
 impl Drop for Tap {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        // The watcher may be changing the tap, so it ends first.
+        self.stop.take();
+        if let Some(w) = self.watcher.take() {
+            let _ = w.join();
+        }
         // SAFETY: each object was created by `open` and is released once; the callback is stopped
         // and removed before the state it reads is freed.
         unsafe {
@@ -235,10 +303,29 @@ impl Drop for Tap {
                 drop(Box::from_raw(self.io));
             }
         }
-        if let Some(w) = self.watcher.take() {
-            let _ = w.join();
-        }
     }
+}
+
+fn numbers(objects: &[AudioObjectID]) -> Retained<NSArray<NSNumber>> {
+    let numbers: Vec<Retained<NSNumber>> = objects.iter().map(|&o| NSNumber::new_u32(o)).collect();
+    NSArray::from_retained_slice(&numbers)
+}
+
+/// Points an open tap at another set of processes, keeping everything else about it.
+unsafe fn retarget(tap: AudioObjectID, objects: &[AudioObjectID]) -> bool {
+    let Some(raw) = get::<*mut CATapDescription>(tap, kAudioTapPropertyDescription, None) else { return false };
+    let Some(description) = Retained::from_raw(raw) else { return false };
+    description.setProcesses(&numbers(objects));
+    let pointer = Retained::as_ptr(&description);
+    let status = AudioObjectSetPropertyData(
+        tap,
+        NonNull::from(&address(kAudioTapPropertyDescription)),
+        0,
+        std::ptr::null(),
+        std::mem::size_of_val(&pointer) as u32,
+        NonNull::from(&pointer).cast(),
+    );
+    status == 0
 }
 
 fn key(k: &CStr) -> Retained<NSString> {
@@ -269,16 +356,16 @@ pub fn open(target: Option<u32>, name: &str, sink: Sink, lost: Arc<Lost>) -> Res
     let own = std::process::id() as i32;
     // SAFETY: Core Audio objects are created here and owned by the returned `Tap`, which releases them.
     unsafe {
-        let all = processes();
-        let objects: Vec<AudioObjectID> = match target {
-            Some(app_pid) => all.iter().filter(|(_, pid, _)| owning_app(*pid).is_some_and(|a| a.processIdentifier() as u32 == app_pid)).map(|(o, ..)| *o).collect(),
-            None => get::<AudioObjectID>(SYSTEM, kAudioHardwarePropertyTranslatePIDToProcessObject, Some(&own.to_ne_bytes())).filter(|&o| o != 0).into_iter().collect(),
-        };
+        // Everything except Saga leaves out its web view's helpers too.
+        let mut objects = objects_of(target.map_or(own, |pid| pid as i32));
+        if target.is_none() {
+            let saga = get::<AudioObjectID>(SYSTEM, kAudioHardwarePropertyTranslatePIDToProcessObject, Some(&own.to_ne_bytes())).filter(|&o| o != 0);
+            objects.extend(saga.filter(|o| !objects.contains(o)));
+        }
         if target.is_some() && objects.is_empty() {
             return Err(Problem::msg(format!("{name} hasn't played any sound yet. Play something in it, then try again.")));
         }
-        let numbers: Vec<Retained<NSNumber>> = objects.iter().map(|&o| NSNumber::new_u32(o)).collect();
-        let list = NSArray::from_retained_slice(&numbers);
+        let list = numbers(&objects);
         let description = match target {
             Some(_) => CATapDescription::initStereoMixdownOfProcesses(CATapDescription::alloc(), &list),
             None => CATapDescription::initStereoGlobalTapButExcludeProcesses(CATapDescription::alloc(), &list),
@@ -287,7 +374,7 @@ pub fn open(target: Option<u32>, name: &str, sink: Sink, lost: Arc<Lost>) -> Res
         description.setMuteBehavior(CATapMuteBehavior::Unmuted);
         description.setName(&NSString::from_str("Saga"));
 
-        let mut state = Tap { tap: 0, device: 0, proc_id: None, io: std::ptr::null_mut(), stop: Arc::new(AtomicBool::new(false)), watcher: None };
+        let mut state = Tap { tap: 0, device: 0, proc_id: None, io: std::ptr::null_mut(), stop: None, watcher: None };
         if AudioHardwareCreateProcessTap(Some(&description), &mut state.tap) != 0 || state.tap == 0 {
             return Err(permission());
         }
@@ -316,29 +403,52 @@ pub fn open(target: Option<u32>, name: &str, sink: Sink, lost: Arc<Lost>) -> Res
             return Err(permission());
         }
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0;
-        state.io = Box::into_raw(Box::new(Io { sink, interleaved }));
+        let tap_buffers = if interleaved { 1 } else { format.mChannelsPerFrame.max(1) as usize };
+        state.io = Box::into_raw(Box::new(Io { sink, interleaved, tap_buffers }));
         if AudioDeviceCreateIOProcID(state.device, Some(io_proc), state.io as *mut c_void, NonNull::from(&mut state.proc_id)) != 0 {
             return Err(Problem::msg(format!("Couldn't record {name}.")));
         }
         if AudioDeviceStart(state.device, state.proc_id) != 0 {
             return Err(permission());
         }
-        // Core Audio says nothing when the app quits; look every second.
+        // Core Audio says nothing when the app quits, and a tap only hears the processes it was made
+        // with, while a browser starts its audio process when it first plays and may start it again
+        // later. So look twice a second, and add the app's new processes to the tap as they come.
         if let Some(pid) = target {
-            let stop = state.stop.clone();
+            let (stop, stopped) = bounded::<()>(0);
+            let (tap, mut known) = (state.tap, objects);
+            state.stop = Some(stop);
             state.watcher = std::thread::Builder::new()
                 .name("saga-tap-watch".into())
                 .spawn(move || {
-                    while !stop.load(Ordering::Acquire) {
-                        std::thread::sleep(Duration::from_millis(500));
-                        if NSRunningApplication::runningApplicationWithProcessIdentifier(pid as i32).is_none_or(|a| a.isTerminated()) {
+                    while let Err(RecvTimeoutError::Timeout) = stopped.recv_timeout(Duration::from_millis(500)) {
+                        if running_app(pid as i32).is_none() {
                             lost.set("stopped");
                             break;
+                        }
+                        let now = objects_of(pid as i32);
+                        if now.iter().any(|o| !known.contains(o)) && retarget(tap, &now) {
+                            known = now;
                         }
                     }
                 })
                 .ok();
         }
         Ok(Opened { rate: format.mSampleRate.round() as u32, channels: 2, name: name.to_string(), _open: Box::new(state) })
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lists this machine's apps; only meaningful by hand: `cargo test --lib lists_apps -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn lists_apps() {
+        for a in apps() {
+            println!("{} {} playing={} icon={}", a.pid, a.name, a.playing, a.icon.is_some());
+        }
     }
 }

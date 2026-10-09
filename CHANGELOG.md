@@ -26,8 +26,15 @@ Write for producers, not developers: say what changed for them, not which file c
 - **Keep going**: every sound becomes its own take, so a run of drum hits turns into separate one-shots.
 - **Record while your DAW has focus**: set a shortcut in Settings › Recording to arm, record and stop from anywhere. The Dock or taskbar icon shows a red dot while a take records.
 - **Record in the mini player**: the same controls, with the newest take ready to drag.
+- **Hide apps you never record**: point at an app in the list of what to record and click its eye. It moves under Hidden, so the apps you do record from stay in reach. Settings › Recording brings them all back.
 
 ### Improved
+- **Filters stay in reach**: the Filter button and Reset no longer scroll out of view when you set a lot of filters. Filters that don't fit beside them move to a line of their own, and a row with more to see fades at its edge.
+- **Filters from the keyboard**: `Mod ⇧ F` puts you straight into the filters, and `Esc` takes you back where you were. Removing a filter from the keyboard moves on to the next one, and screen readers name each tag you remove.
+- **Clear filters, with Undo**: the filter bar's "Reset" and the panel's "Clear" are now both "Clear filters" and do the same thing: they clear the filters, the one-shot/loop switch and the categories, but not your search. Changed your mind? Undo puts them back.
+- **Clearer sorting**: the Sort menu is grouped, says which way each order runs ("Fastest first", "A to Z"), and the arrow next to Sort shows the direction.
+- **Straight to the filter you clicked**: clicking a filter in the bar opens the panel at that filter.
+- **Filters fit the window**: the filter panel stays inside a small window or a large interface size, so Done and the search line are always visible, and the list's toolbar shortens its labels instead of pushing buttons off the edge.
 - **Project key picker stays open**: picking a key no longer closes the pop-up, so you can set Scale lock or grab the scale as MIDI right after.
 
 ### Fixed

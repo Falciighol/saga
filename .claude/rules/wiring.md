@@ -146,7 +146,7 @@ Each pair carries a `Mirrors …` comment. Add one to any new pair, and list it 
 | saved takes | `<saved root>/Recordings`, a library folder like Variations | never auto-deleted |
 | scratch renders | `app_cache_dir/renders` | pruned (`SCRATCH_MAX_AGE` 7 days, `SCRATCH_MAX_BYTES` 500 MB) |
 | kept renders / variations | `<saved root>/Renders`, `<saved root>/Variations` (default `~/Music/Saga`) | never auto-deleted |
-| take options, record source | `saga-prefs` (`recordSource`, `recordStartOnSound`, `recordStopAfter`, `recordKeepGoing`, `recordThresholdDb`) | UI preferences |
+| take options, record source, hidden apps | `saga-prefs` (`recordSource`, `recordStartOnSound`, `recordStopAfter`, `recordKeepGoing`, `recordThresholdDb`, `recordHiddenApps` by app name) | UI preferences |
 
 Rule of thumb: UI-only preferences go in `usePrefs`. Anything the backend needs before the UI
 loads, or across windows, goes in the DB `settings` table, with a `pub const …_SETTING` name.

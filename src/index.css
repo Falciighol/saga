@@ -120,6 +120,17 @@ button {
   display: none;
 }
 
+/* A row whose scrollbar is hidden fades out at an edge that has more beyond it. The component sets the two widths. */
+.edge-fade {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--fade-start, 0px),
+    black calc(100% - var(--fade-end, 0px)),
+    transparent
+  );
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
 }
@@ -130,6 +141,11 @@ button {
 }
 
 input:focus-visible {
+  outline: none;
+}
+
+/* A panel that takes focus when it opens, so Tab starts inside it, doesn't draw a ring around itself. */
+[role="dialog"][tabindex="-1"]:focus-visible {
   outline: none;
 }
 

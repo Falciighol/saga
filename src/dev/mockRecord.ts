@@ -26,6 +26,17 @@ const APPS: AppSource[] = [
   { pid: 512, name: "Spotify", icon: icon("#1AA34A", "S"), playing: false },
   // Picking it shows what the panel says when an app hasn't played anything yet.
   { pid: 733, name: "Serum", icon: icon("#5B47D6", "S"), playing: false },
+  // Apps that hold an audio connection without ever playing, as macOS lists them: enough to need hiding and scrolling.
+  { pid: 901, name: "Messages", icon: icon("#34C759", "M"), playing: false },
+  { pid: 902, name: "Slack", icon: icon("#4A154B", "S"), playing: false },
+  { pid: 903, name: "Discord", icon: icon("#5865F2", "D"), playing: false },
+  { pid: 904, name: "zoom.us", icon: icon("#2D8CFF", "Z"), playing: false },
+  { pid: 905, name: "Safari", icon: icon("#1E88E5", "S"), playing: false },
+  { pid: 906, name: "Mail", icon: icon("#3C8CE7", "M"), playing: false },
+  { pid: 907, name: "FaceTime", icon: icon("#30B94D", "F"), playing: false },
+  { pid: 908, name: "Notion", icon: icon("#37352F", "N"), playing: false },
+  { pid: 909, name: "Ableton Live 12 Suite", icon: icon("#111111", "A"), playing: false },
+  { pid: 910, name: "Splice", icon: icon("#2F2F2F", "S"), playing: false },
 ];
 
 let settings: RecordSettings = { format: "24", retention: "keep", shortcut: null, recordings: "/Users/me/Music/Saga/Recordings" };

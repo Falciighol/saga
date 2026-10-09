@@ -95,8 +95,19 @@ export function dragSamples(rows: SampleRow[]) {
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-function count(n: number, one: string): string {
+/** "1 sample", "1,204 samples". */
+export function count(n: number, one: string): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : `${one}s`}`;
+}
+
+/**
+ * Clears the filters, the one-shot/loop switch and the categories, but not the search text, with Undo. The filter bar
+ * and the filter panel both call it, so "Clear filters" means the same thing in both.
+ */
+export function clearFilters() {
+  const { filters, kind, categories, clearAll, restoreFilters } = useBrowse.getState();
+  clearAll();
+  toast("Filters cleared", "info", { label: "Undo", run: () => restoreFilters({ filters, kind, categories }) });
 }
 
 /** Sets tempo and/or key on these samples and shows the change everywhere they're listed. */

@@ -39,7 +39,7 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
 | `Mod +` / `Mod −` / `Mod 0` | always | `prefs.set({ uiScale })` via `stepScale` | README, Settings list, Settings › Interface size hint |
 | `Mod K`, `Mod F` | not with Shift | focus and select the search input (`search` ref from TitleBar/MiniPlayer) | README (both), Settings list (`⌘K`), `Kbd` in TitleBar and MiniPlayer |
 | `/` | not typing | focus search | README, Settings list |
-| `Mod ⇧ F` | | leave mini / map / Lab / editor for the list, then dispatch `saga:open-filters` (FilterBar) | README, Settings list |
+| `Mod ⇧ F` | | leave mini / map / Lab / editor for the list, then dispatch `saga:open-filters` (FilterBar) | README, Settings list, Filter button title |
 | `Mod A` | list view, not mini, no editor, not typing | `browse.pickAll()` | README, Settings list |
 | `Mod R` | not typing (search box is fine) | `renameTargets()` (lib/actions): picked samples or the selected one | README, Settings list, "Rename…" menu hints, SelectionBar Rename title |
 | `Mod ⇧ R` | row selected, not typing (search box is fine) | `reveal(row.path)` (lib/actions) | README, Settings list, `revealLabel()` menu hint, PreviewPanel reveal button label |
@@ -96,15 +96,18 @@ in the Settings list's "In the Lab" group and in the Progressions "Clear bar ⌫
   `Enter` plays from the start, `⌫`/`Del` move to the Trash (Undo toast), `Mod S` saves to Recordings, `F2` renames.
   They stop propagation, so the global keys don't also run. The rename field: `Enter` keeps, `Esc` cancels.
 - The Record stage's start-line handle (a slider): `↑ ↓` ±1 dB (⇧ ±6), `⌫`/`Del` back to following the noise floor.
+- The Record panel's Threshold field (`ThresholdField` in record/controls.tsx): `↑ ↓` ±1 dB (⇧ ±6), `Enter` sets it, `Esc`
+  cancels. An empty field or "auto" goes back to following the noise floor.
 - Settings › Recording shortcut picker: while listening, the next key press with `Mod`, `Alt` or `Ctrl` (or a function
   key) becomes the shortcut; `Esc` cancels.
 - The Record panel is not a dialog: it doesn't set `role="dialog"`, so browsing keys keep working while a take is armed.
 - List header (`ListHeader` in ListColumns), on a focused column title: `⌥/Alt ← →` move the column (`stepColumn`,
   announced in a live region), `⇧F10` or the menu key open its column menu. `Enter` sorts, or opens the menu for a
   title that can't sort. `Esc` during a header drag drops it where it started.
-- Menus (`MenuList` in Menu.tsx): `↑ ↓ Home End` move between rows, `→` opens a submenu, `←` goes back, `Enter`/`Space`
-  choose, `Tab` closes. A menu opened from the keyboard focuses its first row and gives focus back when it closes. One
-  opened with the mouse takes the keyboard on the first `↑`/`↓` (handled in `MenuHost`).
+- Menus (`MenuList` in Menu.tsx): `↑ ↓ Home End` move between rows, `→` opens a submenu or reaches a row's aside button
+  (Hide in the Record source menu), `←` goes back, `Enter`/`Space` choose, `Tab` closes. A menu opened from the keyboard
+  focuses its first row and gives focus back when it closes. One opened with the mouse takes the keyboard on the first
+  `↑`/`↓` (handled in `MenuHost`).
 
 ### Mouse plus modifier
 `Mod`-click a row toggles it in the picked set, `⇧`-click picks a range (`⇧+Mod` adds a range),

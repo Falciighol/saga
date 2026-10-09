@@ -5,16 +5,13 @@ import { fmtTake } from "../../lib/format";
 import { usePixelRatio } from "../../lib/scale";
 import { setupCanvas } from "../../lib/waveform";
 import { usePrefs } from "../../store/prefs";
-import { live, LIVE_BARS, openPrivacySettings, useRecord } from "../../store/record";
+import { live, LIVE_BARS, openPrivacySettings, setThresholdDb, THRESHOLD_MAX_DB, THRESHOLD_MIN_DB, useRecord, useThreshold } from "../../store/record";
 import { useElementWidth } from "../PreviewPanel";
 import { cx } from "../ui";
 import { openSourceMenu } from "./controls";
 
 /** The quietest level the stage shows; its height is in decibels, so the start line moves like a fader. */
 const FLOOR_DB = -60;
-/** How far the start line can be dragged. */
-const MIN_DB = -60;
-const MAX_DB = -6;
 /** Takes stop at 15 minutes; the timer warns a minute before. */
 const WARN_AT = 14 * 60;
 
@@ -35,19 +32,18 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
   const status = useRecord((s) => s.status);
   const startOnSound = usePrefs((s) => s.recordStartOnSound);
   const stopAfter = usePrefs((s) => s.recordStopAfter);
-  const manualDb = usePrefs((s) => s.recordThresholdDb);
+  const { level: threshold, manual } = useThreshold();
   const keepGoing = usePrefs((s) => s.recordKeepGoing);
   const open = phase !== "idle";
   const recording = phase === "recording";
   // The start line matters while something is listened for: a take to start, or silence to end one.
   const showLine = startOnSound || stopAfter != null;
-  const threshold = manualDb != null ? 10 ** (manualDb / 20) : (status?.threshold ?? 10 ** (-48 / 20));
   const thresholdRef = useRef(threshold);
   thresholdRef.current = threshold;
   const showLineRef = useRef(showLine);
   showLineRef.current = showLine;
-  const manualRef = useRef(manualDb != null);
-  manualRef.current = manualDb != null;
+  const manualRef = useRef(manual);
+  manualRef.current = manual;
 
   useEffect(() => {
     const el = canvas.current;
@@ -99,45 +95,44 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
     if (!open) return;
     let raf = 0;
     let last = -1;
+    let lastCount = -1;
     const loop = () => {
-      if (live.total !== last) {
+      // The count drops when a finished take clears the stage, even before new bars arrive.
+      if (live.total !== last || live.count !== lastCount) {
         last = live.total;
+        lastCount = live.count;
         draw();
       }
       raf = requestAnimationFrame(loop);
     };
     loop();
     return () => cancelAnimationFrame(raf);
-  }, [width, height, compact, colors, ratio, open, threshold, showLine, manualDb]);
+  }, [width, height, compact, colors, ratio, open, threshold, showLine, manual]);
 
-  // Dragging the line: its distance from the middle sets the level, snapped to whole decibels.
-  const dbAt = (clientY: number) => {
-    const r = box.current?.getBoundingClientRect();
-    if (!r) return null;
-    const maxAmp = r.height / 2 - 2;
-    const off = Math.min(maxAmp, Math.abs(clientY - (r.top + r.height / 2)));
-    return Math.round(Math.min(MAX_DB, Math.max(MIN_DB, FLOOR_DB + (off / maxAmp) * -FLOOR_DB)));
-  };
-  const setDb = (db: number | null) => {
-    usePrefs.getState().set({ recordThresholdDb: db });
-    useRecord.getState().optionsChanged();
+  // Dragging the line: its distance from the middle sets the level, snapped to whole decibels. Where the press landed
+  // relative to the line is kept, so grabbing it a few pixels off doesn't make the level jump.
+  const grab = useRef(0);
+  const offsetOf = (clientY: number, r: DOMRect) => Math.abs(clientY - (r.top + r.height / 2));
+  const lineOffset = (r: DOMRect) => heightOf(threshold) * (r.height / 2 - 2);
+  const startDrag = (e: ReactPointerEvent, stage: HTMLElement) => {
+    const r = stage.getBoundingClientRect();
+    grab.current = offsetOf(e.clientY, r) - lineOffset(r);
+    stage.setPointerCapture(e.pointerId);
   };
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!showLine || e.button !== 0) return;
     const r = e.currentTarget.getBoundingClientRect();
-    const lineOff = (heightOf(threshold) * (r.height / 2 - 2));
-    const off = Math.abs(e.clientY - (r.top + r.height / 2));
     // Grab the line when the press is near it, so clicks elsewhere on the stage don't move it.
-    if (Math.abs(off - lineOff) > 8) return;
+    if (Math.abs(offsetOf(e.clientY, r) - lineOffset(r)) > 8) return;
     e.preventDefault();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const db = dbAt(e.clientY);
-    if (db != null) setDb(db);
+    startDrag(e, e.currentTarget);
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    const db = dbAt(e.clientY);
-    if (db != null) setDb(db);
+    const r = e.currentTarget.getBoundingClientRect();
+    const maxAmp = r.height / 2 - 2;
+    const off = Math.min(maxAmp, Math.max(0, offsetOf(e.clientY, r) - grab.current));
+    setThresholdDb(FLOOR_DB + (off / maxAmp) * -FLOOR_DB);
   };
   const lineDb = Math.round(toDb(threshold));
   const onHandleKey = (e: ReactKeyboardEvent) => {
@@ -145,17 +140,24 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();
       e.stopPropagation();
-      setDb(Math.min(MAX_DB, Math.max(MIN_DB, lineDb + (e.key === "ArrowUp" ? by : -by))));
+      setThresholdDb(lineDb + (e.key === "ArrowUp" ? by : -by));
     } else if (e.key === "Backspace" || e.key === "Delete") {
       e.preventDefault();
       e.stopPropagation();
-      setDb(null);
+      setThresholdDb(null);
     }
   };
 
   const seconds = status?.seconds ?? 0;
   const late = recording && seconds >= WARN_AT;
   const stopping = recording && stopAfter != null && (status?.silentFor ?? 0) > 0.3;
+  const note = late
+    ? "Takes stop at 15:00"
+    : status?.nothingYet && phase === "armed"
+      ? "Nothing is coming through yet. Some apps block recording."
+      : stopping
+        ? `Stopping in ${Math.max(0, stopAfter! - status!.silentFor).toFixed(1)} s`
+        : null;
   const lineTop = `calc(50% - ${heightOf(threshold) * 50}% + ${heightOf(threshold) * 2}px)`;
 
   return (
@@ -170,7 +172,11 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
       {/* The readouts sit over the waveform's quiet edges; a compact stage is too short for them, so its owner
           shows the state beside it. */}
       <div className={cx("pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between", compact ? "px-2 pt-1" : "px-3 pt-2.5")}>
-        {!compact && <StateLabel late={late} />}
+        {!compact && (
+          <span className={SCRIM}>
+            <StateLabel late={late} />
+          </span>
+        )}
         <div className="flex items-center gap-1.5">
           {status?.clipped && recording && (
             <span className="rounded bg-rec-soft px-1.5 font-mono text-micro font-medium text-rec" title="Part of this take reached full scale and may sound distorted">
@@ -184,15 +190,7 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
       </div>
       {!compact && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 px-3 pb-2 text-small">
-          <span className={cx("min-w-0 truncate", late ? "text-rec" : "text-text3")}>
-            {late
-              ? "Takes stop at 15:00"
-              : status?.nothingYet && phase === "armed"
-                ? "Nothing is coming through yet. Some apps block recording."
-                : stopping
-                  ? `Stopping in ${Math.max(0, stopAfter! - status!.silentFor).toFixed(1)} s`
-                  : null}
-          </span>
+          {note && <span className={cx(SCRIM, "min-w-0 truncate", late ? "text-rec" : "text-text3")}>{note}</span>}
         </div>
       )}
       {showLine && open && !compact && (
@@ -200,37 +198,37 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
           role="slider"
           tabIndex={0}
           aria-label="Level that starts a take"
-          aria-valuemin={MIN_DB}
-          aria-valuemax={MAX_DB}
+          aria-valuemin={THRESHOLD_MIN_DB}
+          aria-valuemax={THRESHOLD_MAX_DB}
           aria-valuenow={lineDb}
-          aria-valuetext={manualDb == null ? `${lineDb} dB, following the noise floor` : `${lineDb} dB`}
+          aria-valuetext={manual ? `${lineDb} dB` : `${lineDb} dB, following the noise floor`}
           title={
-            manualDb == null
+            !manual
               ? "A sound louder than this starts a take. It follows the source's noise floor; drag the line to set it yourself."
               : "A sound louder than this starts a take. Double-click to follow the noise floor again."
           }
           onKeyDown={onHandleKey}
-          onDoubleClick={() => setDb(null)}
+          onDoubleClick={() => setThresholdDb(null)}
           onPointerDown={(e) => {
             e.stopPropagation();
-            e.currentTarget.parentElement?.setPointerCapture(e.pointerId);
+            if (e.button === 0 && e.currentTarget.parentElement) startDrag(e, e.currentTarget.parentElement);
           }}
           className={cx(
             "absolute right-2 -translate-y-1/2 cursor-ns-resize rounded-md border px-1.5 font-mono text-micro tabular whitespace-nowrap",
-            manualDb == null ? "border-line2 bg-panel text-text3" : "border-accent-wave bg-panel text-accent-ink",
+            manual ? "border-accent-wave bg-panel text-accent-ink" : "border-line2 bg-panel text-text3",
           )}
           style={{ top: lineTop }}
         >
-          {manualDb == null ? `Auto ${lineDb} dB` : `${lineDb} dB`}
+          {manual ? `${lineDb} dB` : `Auto ${lineDb} dB`}
         </div>
       )}
-      {showLine && open && manualDb != null && !compact && (
+      {showLine && open && manual && !compact && (
         <button
           type="button"
           aria-label="Follow the noise floor again"
           title="Follow the noise floor again"
           onPointerDown={(e) => e.stopPropagation()}
-          onClick={() => setDb(null)}
+          onClick={() => setThresholdDb(null)}
           className="absolute bottom-1.5 right-2 grid h-6 w-6 place-items-center rounded-md text-text3 hover:bg-raised hover:text-text"
         >
           <RotateCcw size={13} />
@@ -239,6 +237,9 @@ export function Stage({ height, compact }: { height: number; compact?: boolean }
     </div>
   );
 }
+
+/** A soft, blurred backing for text drawn over the waveform, so a loud take never makes it unreadable. */
+const SCRIM = "rounded-md bg-bg/75 px-1.5 py-0.5 backdrop-blur-sm";
 
 /** "Waiting for sound", or the REC dot and the take's length. */
 export function StateLabel({ compact, late = false }: { compact?: boolean; late?: boolean }) {

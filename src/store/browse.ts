@@ -88,6 +88,8 @@ interface BrowseState {
   resetFilters: () => void;
   /** Clears filters, categories and the one-shot/loop switch in one query. */
   clearAll: () => void;
+  /** Puts back filters, categories and the one-shot/loop switch saved before a clear, for Undo. */
+  restoreFilters: (saved: Pick<BrowseState, "filters" | "kind" | "categories">) => void;
   setSort: (sort: SortKey, desc?: boolean) => void;
   shuffle: () => void;
 
@@ -299,6 +301,10 @@ export const useBrowse = create<BrowseState>((set, get) => {
     },
     clearAll: () => {
       set({ filters: EMPTY_FILTERS, categories: [], kind: "all" });
+      run();
+    },
+    restoreFilters: ({ filters, kind, categories }) => {
+      set({ filters, kind, categories });
       run();
     },
     setSort: (sort, desc) => {
