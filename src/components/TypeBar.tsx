@@ -19,7 +19,7 @@ export function TypeBar() {
     n != null && <span className="font-mono text-micro font-normal text-text3 tabular">{fmtCount(n)}</span>;
 
   return (
-    <div className="flex h-[52px] shrink-0 items-center gap-3.5 px-4">
+    <div className="flex h-14 shrink-0 items-center gap-3.5 px-4 py-1">
       <Segmented
         label="Sample type"
         value={kind}
