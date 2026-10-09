@@ -5,7 +5,7 @@ import type { Accent, ThemePref } from "../lib/theme";
 import type { ColumnPref } from "../lib/listColumns";
 import type { RenamePattern } from "../lib/rename";
 import type { SavedPreset } from "../lib/renamePresets";
-import type { Aspect } from "../lib/types";
+import type { Aspect, RecordSource } from "../lib/types";
 
 export type MapColor = "category" | "brightness" | "loudness";
 export type MapArrange = Exclude<Aspect, "overall">;
@@ -56,6 +56,16 @@ export interface PrefValues {
   listColumns: ColumnPref[] | null;
   /** The newest version whose What's new the user has seen or put off; null before Saga started recording it. */
   lastSeenVersion: string | null;
+  /** What the Record panel records; null until the user picks something. */
+  recordSource: RecordSource | null;
+  /** An armed take waits for the first sound instead of starting at once. */
+  recordStartOnSound: boolean;
+  /** Seconds of silence that end a take; null never ends one. */
+  recordStopAfter: number | null;
+  /** Arm again after each take, so every sound becomes its own take. */
+  recordKeepGoing: boolean;
+  /** The level that starts a take, in dBFS; null follows the source's noise floor. */
+  recordThresholdDb: number | null;
 }
 
 interface Prefs extends PrefValues {
@@ -88,6 +98,11 @@ export const DEFAULT_PREFS: PrefValues = {
   renamePresets: [],
   listColumns: null,
   lastSeenVersion: null,
+  recordSource: null,
+  recordStartOnSound: true,
+  recordStopAfter: 2,
+  recordKeepGoing: false,
+  recordThresholdDb: null,
 };
 
 export const usePrefs = create<Prefs>()(

@@ -94,6 +94,8 @@ interface ConfirmRequest {
   /** The action takes something away. */
   danger?: boolean;
   onConfirm: () => void;
+  /** A second way forward, beside Cancel, such as "Keep them and quit". */
+  alternative?: { label: string; onSelect: () => void };
 }
 
 interface ConfirmState {
@@ -140,6 +142,18 @@ export function ConfirmHost() {
           <button type="button" onClick={close} className="h-8 rounded-lg px-3 text-ui text-text2 hover:bg-raised">
             Cancel
           </button>
+          {request.alternative && (
+            <button
+              type="button"
+              onClick={() => {
+                request.alternative!.onSelect();
+                close();
+              }}
+              className="h-8 rounded-lg border border-line2 px-3 text-ui text-text hover:bg-raised"
+            >
+              {request.alternative.label}
+            </button>
+          )}
           <button
             ref={confirm}
             type="button"

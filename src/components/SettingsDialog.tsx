@@ -21,6 +21,7 @@ import { useConfirm } from "./Prompt";
 import { chooseFolders } from "./Sidebar";
 import { InstalledFontPicker, type FontList } from "./InstalledFontPicker";
 import { cx, IconButton, Kbd, SectionLabel, Segmented, Switch } from "./ui";
+import { RecordingSection } from "./settings/RecordingSection";
 
 function Row({ label, hint, block, children }: { label: string; hint?: string; block?: boolean; children: ReactNode }) {
   return (
@@ -402,7 +403,7 @@ const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
     group: "Processing",
     keys: [
       [["E"], "Open the editor"],
-      [["R"], "Reverse"],
+      [["⇧ R"], "Reverse"],
       [["[ ]"], "Semitone down / up (through the key's scale with scale lock)"],
       [["S"], "Sync to project tempo"],
       [["K"], "Match project key"],
@@ -416,6 +417,16 @@ const SHORTCUTS: { group: string; keys: [string[], string][] }[] = [
       [["↑ ↓"], "On the map: walk the similar sounds"],
       [["G"], "Find similar sounds"],
       [["H"], "The Lab"],
+    ],
+  },
+  {
+    group: "Recording",
+    keys: [
+      [["R"], "Record panel, then arm, record now and stop"],
+      [["Esc"], "Disarm, or stop and keep the take"],
+      [["⌫"], "In the takes: move to the Trash"],
+      [[`${modKey} S`], "In the takes: save to Recordings"],
+      [["F2"], "In the takes: rename"],
     ],
   },
   {
@@ -641,6 +652,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </section>
 
             <SavedSoundsSection />
+
+            <RecordingSection />
 
             <UpdatesSection />
 

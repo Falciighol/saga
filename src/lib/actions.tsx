@@ -11,6 +11,7 @@ import { useLibrary } from "../store/library";
 import { useEditor } from "../store/editor";
 import { shouldLoop, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
+import { isTake, useRecord } from "../store/record";
 import { useSimilar } from "../store/similar";
 import { useUi } from "../store/ui";
 import { toast } from "../store/toasts";
@@ -52,8 +53,16 @@ export function dragOut(paths: string[], ids: number[] = []) {
   });
 }
 
-/** Drags what you hear: the original, or (with sync, key matching or edits) a render of it. */
+/** Drags what you hear: the original, or (with sync, key matching or edits) a render of it. An unsaved take is
+ *  saved first, while the mouse is held, because the DAW project will refer to its file. */
 export function dragSample(row: SampleRow) {
+  if (isTake(row)) {
+    void useRecord
+      .getState()
+      .save(row.id, { quiet: true })
+      .then((saved) => saved && !isTake(saved) && dragSample(saved));
+    return;
+  }
   const p = computeProcessing(row, useProject.getState(), editFor(row.id));
   if (!p.processed) {
     dragOut([row.path], [row.id]);
@@ -248,7 +257,8 @@ export async function playNextAfter(id: number | null) {
     return;
   }
   const browse = useBrowse.getState();
-  if (browse.selected?.id !== id || browse.total == null) return;
+  // A take previewed from the Record panel isn't in the list, so there's no next one.
+  if (browse.selected?.id !== id || browse.total == null || browse.selectedIndex < 0) return;
   const from = browse.selectedIndex;
   for (let i = from + 1; i < Math.min(browse.total, from + 1 + NEXT_LOOKAHEAD); i++) {
     const row = await browse.loadRow(i);
@@ -270,11 +280,13 @@ export function openInLab(row: SampleRow, index: number, tool: "finder" | "tempo
   useUi.getState().setView("lab");
 }
 
-/** Shows the sound map with the samples that sound most like this one. */
+/** Shows the sound map with the samples that sound most like this one. An unsaved take isn't on the map, so it's
+ *  compared the way a dropped file is. */
 export function findSimilar(row: SampleRow) {
   if (useUi.getState().mini) useUi.getState().setMini(false);
   useUi.getState().setView("map");
-  useSimilar.getState().find(row);
+  if (isTake(row)) useSimilar.getState().fromFile(row.path, "Unsaved take");
+  else useSimilar.getState().find(row);
 }
 
 export async function reveal(path: string) {

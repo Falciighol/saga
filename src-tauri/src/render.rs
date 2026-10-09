@@ -11,6 +11,8 @@ use std::time::{Duration, SystemTime};
 /// Folders inside the saved sounds folder.
 pub const RENDERS_DIR: &str = "Renders";
 pub const VARIATIONS_DIR: &str = "Variations";
+/// Takes saved from the Record panel; kept in the library like variations.
+pub const RECORDINGS_DIR: &str = "Recordings";
 
 /// Renders made ahead of time while browsing live in the app's cache folder ("scratch") until
 /// they're dragged out. No project can refer to them, so Saga deletes them on its own: after a

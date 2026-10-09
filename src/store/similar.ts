@@ -5,7 +5,11 @@ import { rowPatchListeners, useBrowse } from "./browse";
 import { usePrefs } from "./prefs";
 import { toast } from "./toasts";
 
-export type SimilarTarget = { kind: "sample"; row: SampleRow } | { kind: "recording" } | { kind: "file"; name: string; path: string };
+export type SimilarTarget =
+  | { kind: "sample"; row: SampleRow }
+  | { kind: "recording" }
+  /** `what` says where the file came from: "Dropped file", "Unsaved take". */
+  | { kind: "file"; name: string; path: string; what?: string };
 
 interface SimilarState {
   target: SimilarTarget | null;
@@ -27,7 +31,8 @@ interface SimilarState {
   refreshIfWaiting: () => void;
   setAspect: (aspect: Aspect) => void;
   setScope: (sourceId: number | null) => void;
-  fromFile: (path: string) => void;
+  /** `what` says where the file came from, under its name; "Dropped file" when left out. */
+  fromFile: (path: string, what?: string) => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   cancelRecording: () => void;
@@ -102,9 +107,9 @@ export const useSimilar = create<SimilarState>((set, get) => {
       get().refresh();
     },
 
-    fromFile: (path) => {
+    fromFile: (path, what) => {
       const name = path.split(/[\\/]/).pop() ?? path;
-      const target: SimilarTarget = { kind: "file", name, path };
+      const target: SimilarTarget = { kind: "file", name, path, what };
       void run(target, request(target));
     },
 

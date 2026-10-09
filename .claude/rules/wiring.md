@@ -21,7 +21,7 @@ component / store
   ↳ faked by src/dev/mockBackend.ts for `npm run dev` in a browser
 ```
 
-- Today there are 69 commands, and `api.ts` and `generate_handler!` match one to one. Keep it
+- Today there are 83 commands, and `api.ts` and `generate_handler!` match one to one. Keep it
   that way. Steps for adding a command are in [ipc-contract.md](ipc-contract.md).
 - Argument names: Tauri turns camelCase JS keys into snake_case Rust parameters
   (`sourceId` → `source_id`). Struct payloads use `#[serde(rename_all = "camelCase")]`.
@@ -42,6 +42,11 @@ component / store
 | `playback` | `audio.rs` engine → `lib.rs` | `PlaybackEvent` | `usePlayer.handleEvent`, then `playNextAfter` (lib/actions) on `ended` | position anchor, ended, errors, Play next |
 | `record-level` | `commands.rs` (`start_recording`) | `RecordLevel` | `useSimilar.onLevel` | Find by recording meter |
 | `lab-transport` | `audio.rs`/`sequence.rs` → `lib.rs` | `TransportEvent` | `onTransport` in `store/lab.ts` | progression playhead |
+| `take-status` | `capture.rs` (the `saga-capture` thread, ~30/s while a source is open, and once on closing) | `TakeStatus` | `useRecord.onStatus` | the Record panel's live waveform, timer and state |
+| `take-landed` | `capture.rs` `store` (after trimming and indexing a take) | `TakeLanded` | `useRecord.onLanded` | the take joins the tray |
+| `take-notice` | `capture.rs` | `TakeNotice` | `useRecord.onNotice` | a toast, with Open settings for a missing permission |
+| `record-shortcut` | `lib.rs` global shortcut handler | none | `stepRecording(true)` (store/record) | the shortcut from anywhere steps arm → record → stop |
+| `quit-requested` | `lib.rs` (`CloseRequested` / `ExitRequested` with unsaved takes set to go on quit) | count | `askAboutTakes` in `App.tsx` → `api.quitApp` | asks before unsaved takes go to the Trash |
 
 The listeners are set up once in `App.tsx` (`events.*` from `api.ts`) and removed on unmount. A
 new event needs an `events.onX` wrapper in `api.ts`, a payload type that mirrors the Rust one, and
@@ -98,6 +103,9 @@ mock, all together.
 | `applyValues` (key/tempo by hand) | `api.setSampleValues` → `useBrowse.replaceRows` + `refresh()` (facets count keys) |
 | `startBrowsing()` (App mount) | opens the "all samples" view, which runs the first query |
 | `startUpdateChecks()` (App mount) | updater schedule (launch + every 12 h, off in dev) |
+| `useRecord.save(id)` / `dragSample(take)` | `api.saveTake` → the row moves to Recordings (`takes.rs`), `useBrowse.replaceRows` + `refresh()`, `useLibrary.refresh()` (Recordings may be a new folder). Dragging an unsaved take saves it first, quietly |
+| `useRecord.remove(ids)` | hides the takes, Undo toast; after 10 s `api.trashTakes` (OS Trash) |
+| `prefs.record*` (take options) | `useRecord.optionsChanged()` → `api.setTakeOptions` (25 ms debounce) when a source is open |
 | `startWhatsNew()` (App mount) | compares the running version with `prefs.lastSeenVersion`; after an update (or, with no value yet, when the library has folders) shows the What's new card. `show()` / `later()` write `lastSeenVersion` |
 
 Shared helpers that many components depend on: `targetIds` / `targetRows` (browse.ts) decide
@@ -119,6 +127,7 @@ whether an action applies to the picked set or the selected row. `editFor` / `us
 | `browse.ts` `backendFilters()` | `lib.rs` `ipc_tests::ui_filters` | the filters JSON shape |
 | `progressions.ts` | `sequence.rs`, `midi.rs` | a progression as played and as a MIDI clip |
 | `changelog.ts` `parseChangelog`, `isKeys` | `scripts/changelog.mjs` `section`, `isKeys` | CHANGELOG.md headings and key spelling (Node, not Rust) |
+| `types.ts` `RecordSource`, `TakeOptions`, `TakeStatus`, `RecordSources`… | `capture.rs`, `takes.rs`, `commands.rs` `RecordSettings` | the Record panel's sources, options, live status and settings |
 
 Each pair carries a `Mirrors …` comment. Add one to any new pair, and list it here.
 
@@ -132,9 +141,12 @@ Each pair carries a `Mirrors …` comment. Add one to any new pair, and list it 
 | `saga-lab` | localStorage (`store/lab.ts`, `partialize` whitelist) | Lab tool, scale, sketch, ideas |
 | per-sample edits | memory only (`useEdits`) | gone on restart, by design |
 | `library.db` | `app_data_dir` (SQLite + FTS5, `db.rs`) | schema in `SCHEMA`, new `samples` columns in `ADDED_COLUMNS` |
-| DB `settings` table | `output_device`, `saved_sounds_dir` (`SAVED_SOUNDS_SETTING`), `excluded_folder_names` (`EXCLUDED_NAMES_SETTING`, JSON) | backend-owned settings |
+| DB `settings` table | `output_device`, `saved_sounds_dir` (`SAVED_SOUNDS_SETTING`), `excluded_folder_names` (`EXCLUDED_NAMES_SETTING`, JSON), `take_format`, `takes_retention`, `record_shortcut` (`capture.rs` constants) | backend-owned settings |
+| unsaved takes | `app_data_dir/Takes` (a hidden source, `sources.hidden = 1`, kept out of every browse query by `db::VISIBLE`), `Takes/.incoming` while recording | cleared only as Settings › Recording says, always to the Trash |
+| saved takes | `<saved root>/Recordings`, a library folder like Variations | never auto-deleted |
 | scratch renders | `app_cache_dir/renders` | pruned (`SCRATCH_MAX_AGE` 7 days, `SCRATCH_MAX_BYTES` 500 MB) |
 | kept renders / variations | `<saved root>/Renders`, `<saved root>/Variations` (default `~/Music/Saga`) | never auto-deleted |
+| take options, record source | `saga-prefs` (`recordSource`, `recordStartOnSound`, `recordStopAfter`, `recordKeepGoing`, `recordThresholdDb`) | UI preferences |
 
 Rule of thumb: UI-only preferences go in `usePrefs`. Anything the backend needs before the UI
 loads, or across windows, goes in the DB `settings` table, with a `pub const …_SETTING` name.
@@ -148,6 +160,13 @@ cached `SoundIndex` and map `Layouts` (rebuilt when `Db::changes()` moves). Comm
 `State<'_, AppState>` and are all `async`. Blocking file or decode work goes in
 `tauri::async_runtime::spawn_blocking`.
 
+The Record panel's source runs on its own `saga-capture` thread (not lowered: it has to keep up with
+the device), fed by the audio callback through recycled buffers (`capture::Sink`, no allocation).
+Windows' process loopback runs on a `saga-loopback` thread; macOS taps call back on Core Audio's IO
+thread. A stopped take is trimmed and stored before `Capture::stop` returns, so quitting keeps it;
+with Keep going, storing happens on a `saga-take` thread beside the armed source.
+
 `rename_samples` holds `Indexer::hold_rescans()` while it moves files (old name → temporary name →
 new name, then one DB transaction). The scan thread waits on it, so the folder watcher never rescans
-a file halfway and drops its row. Anything else that moves a user's files must do the same.
+a file halfway and drops its row. Anything else that moves a user's files must do the same, and
+`takes::save` does when it moves a take into Recordings.

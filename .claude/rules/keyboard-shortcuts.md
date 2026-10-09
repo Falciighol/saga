@@ -55,16 +55,18 @@ All app-wide keys are handled by **one** `window` keydown listener: `useHotkeys`
 | `M` | not mini, no editor | `ui.toggleView()` (list ⇄ map) | README, Settings list |
 | `H` | not mini | `ui.toggleLab()` | README, Settings list, ProjectControls "(H)" title |
 | `G` | row selected, not mini | `findSimilar(row)` (lib/actions) | README, Settings list, PreviewPanel title, `sampleMenu` hint |
-| `R` | row selected | `useEdits.update(id, { reverse })` | README, Settings list, "Reverse (R)" labels |
+| `⇧ R` | row selected | `useEdits.update(id, { reverse })` | README, Settings list, "Reverse (⇧R)" labels |
+| `R` | | `stepRecording()` (store/record): opens the Record panel (or the mini player's strip), then arm → record now → stop. The global shortcut (Settings › Recording, `record-shortcut` event) calls `stepRecording(true)`, which opens and arms in one press | README Recording table, Settings list, Record button titles |
 | `[` `]` | row selected | `stepPitch(row, ±1)` (project.ts; follows the scale when scale lock is on) | README, Settings list, key popover text |
 | `S` | | `project.set({ sync: !sync })` | README, Settings list, ProjectControls title |
 | `K` | a project key is set | `project.set({ matchKey: !matchKey })` | README, Settings list, PreviewPanel title |
 | `T` | | `useTapTempo` → `project.set({ bpm })` | README, Settings list, ProjectControls and TempoTools titles |
 
 ### Escape, first match wins
-cancel recording (`similar.recording`) → clear picks (more than one picked, not typing, not on
+cancel recording (`similar.recording`) → stop the Record panel's source when armed or recording, keeping the take
+(not typing) → clear picks (more than one picked, not typing, not on
 the map) → close the editor (not typing) → clear search text (in search with text) → blur the
-focused input → clear the map lasso selection → stop playback. In the Lab, Esc (when not typing)
+focused input → clear the map lasso selection → stop playback → close the Record panel. In the Lab, Esc (when not typing)
 calls `stopNotes()`, `stopProgression()` and `player.stop()` instead.
 
 ### In the Lab (`view === "lab"`)
@@ -90,6 +92,13 @@ in the Settings list's "In the Lab" group and in the Progressions "Clear bar ⌫
   bar; a twentieth or a quarter of a one-shot), `Home` back to where playback starts. They stop propagation, so the
   global `←` waits until the waveform loses focus; `↑ ↓` still browse.
 - Drag tile and mini player Drag button after a failed render: `Enter`/`Space` try again.
+- The takes list (`TakeList` in record/Takes.tsx, a focusable listbox): `↑ ↓` move and preview, `Space` plays,
+  `Enter` plays from the start, `⌫`/`Del` move to the Trash (Undo toast), `Mod S` saves to Recordings, `F2` renames.
+  They stop propagation, so the global keys don't also run. The rename field: `Enter` keeps, `Esc` cancels.
+- The Record stage's start-line handle (a slider): `↑ ↓` ±1 dB (⇧ ±6), `⌫`/`Del` back to following the noise floor.
+- Settings › Recording shortcut picker: while listening, the next key press with `Mod`, `Alt` or `Ctrl` (or a function
+  key) becomes the shortcut; `Esc` cancels.
+- The Record panel is not a dialog: it doesn't set `role="dialog"`, so browsing keys keep working while a take is armed.
 - List header (`ListHeader` in ListColumns), on a focused column title: `⌥/Alt ← →` move the column (`stepColumn`,
   announced in a live region), `⇧F10` or the menu key open its column menu. `Enter` sorts, or opens the menu for a
   title that can't sort. `Esc` during a header drag drops it where it started.

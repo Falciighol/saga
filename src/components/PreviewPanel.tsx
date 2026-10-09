@@ -1,4 +1,4 @@
-import { FolderPlus, FolderSearch, ListEnd, Minus, Pause, Play, Plus, Repeat, SlidersHorizontal, Star, Volume2, X } from "lucide-react";
+import { Download, FolderPlus, FolderSearch, ListEnd, Minus, Pause, Play, Plus, Repeat, SlidersHorizontal, Star, Trash2, Volume2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { usePalette } from "../hooks/useTheme";
 import { askProjectKey, collectionSubmenu, dragOut, dragSample, findSimilar, keySubmenu, reveal, setPlayNext, tempoSubmenu, toggleLoop } from "../lib/actions";
@@ -13,6 +13,7 @@ import type { SampleRow } from "../lib/types";
 import { decodePeaks, setupCanvas, toBars } from "../lib/waveform";
 import { useBrowse } from "../store/browse";
 import { useEditor } from "../store/editor";
+import { isTake, useIsTake, useRecord } from "../store/record";
 import { playerPosition, shouldLoop, timelinePosition, useLoopOn, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { pitchStep, stepPitch, useEdit, useEdits, useProject } from "../store/project";
@@ -70,9 +71,10 @@ export function MetronomeIcon({ size = 16 }: { size?: number }) {
   );
 }
 
-/** Drags out what you hear: the original file, or the render the preview made of it. */
+/** Drags out what you hear: the original file, or the render the preview made of it. An unsaved take goes through
+ *  `dragSample`, which saves it first. */
 export function dragHeard(row: SampleRow, state: RenderState) {
-  if (state.kind === "original") dragOut([state.path], [row.id]);
+  if (state.kind === "original" && !isTake(row)) dragOut([state.path], [row.id]);
   else dragSample(row);
 }
 
@@ -530,7 +532,7 @@ export function DragTile({ row, state, processing, tall, onRetry }: { row: Sampl
       }}
       className={cx(
         "flex shrink-0 items-center gap-2.5 rounded-lg border pr-3.5 pl-2.5",
-        tall ? "h-[76px] border-dashed border-accent-wave bg-accent-soft" : "h-9 border-line2 bg-raised",
+        tall ? "h-[76px] border-dashed border-accent-wave bg-accent-soft" : "h-12 border-line2 bg-raised",
         offline ? "cursor-default opacity-60" : retry ? "cursor-pointer hover:bg-raised2" : failed ? "cursor-default" : "cursor-grab active:cursor-grabbing",
         state.kind === "rendering" && !offline && "cursor-progress",
       )}
@@ -786,6 +788,7 @@ function PreviewBody({ row, state, processing, retry, tags, short }: { row: Samp
   const update = useEdits((s) => s.update);
   const reset = useEdits((s) => s.reset);
   const openEditor = useEditor((s) => s.open);
+  const take = useIsTake(row);
 
   const playing = status === "playing" || status === "loading";
   const loopOn = shouldLoop(row);
@@ -857,26 +860,40 @@ function PreviewBody({ row, state, processing, retry, tags, short }: { row: Samp
             <SlidersHorizontal size={15} strokeWidth={1.75} />
             <span className="@max-[860px]/preview:sr-only">Edit</span>
           </button>
-          <button
-            type="button"
-            title="Add to a collection"
-            onClick={async (e) => {
-              const el = e.currentTarget;
-              try {
-                const member = await api.sampleCollections(row.id);
-                openMenuBelow(el, collectionSubmenu([row.id], member), "right");
-              } catch (err) {
-                toast(`Couldn't load your collections: ${errorMessage(err)}`);
-              }
-            }}
-            className={cx(action, iconOnly)}
-          >
-            <FolderPlus size={15} strokeWidth={1.75} />
-            <span className="@max-[860px]/preview:sr-only">Collect</span>
-          </button>
-          <IconButton label={`${revealLabel()} (${modKey}⇧R)`} onClick={() => void reveal(row.path)} className="border border-line2">
-            <FolderSearch size={15} strokeWidth={1.75} />
-          </IconButton>
+          {take ? (
+            <>
+              <button type="button" onClick={() => void useRecord.getState().save(row.id)} title="Save this take to Recordings, in your library. Dragging it out saves it too." className={cx(action, iconOnly)}>
+                <Download size={15} strokeWidth={1.75} />
+                <span className="@max-[860px]/preview:sr-only">Save</span>
+              </button>
+              <IconButton label="Move this take to the Trash" onClick={() => useRecord.getState().remove([row.id])} className="border border-line2">
+                <Trash2 size={15} strokeWidth={1.75} />
+              </IconButton>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                title="Add to a collection"
+                onClick={async (e) => {
+                  const el = e.currentTarget;
+                  try {
+                    const member = await api.sampleCollections(row.id);
+                    openMenuBelow(el, collectionSubmenu([row.id], member), "right");
+                  } catch (err) {
+                    toast(`Couldn't load your collections: ${errorMessage(err)}`);
+                  }
+                }}
+                className={cx(action, iconOnly)}
+              >
+                <FolderPlus size={15} strokeWidth={1.75} />
+                <span className="@max-[860px]/preview:sr-only">Collect</span>
+              </button>
+              <IconButton label={`${revealLabel()} (${modKey}⇧R)`} onClick={() => void reveal(row.path)} className="border border-line2">
+                <FolderSearch size={15} strokeWidth={1.75} />
+              </IconButton>
+            </>
+          )}
           <DragTile row={row} state={state} processing={processing} onRetry={retry} />
         </div>
       </div>
@@ -907,7 +924,7 @@ function PreviewBody({ row, state, processing, retry, tags, short }: { row: Samp
             <IconButton label={PLAY_NEXT_LABEL} active={playNext} aria-pressed={playNext} onClick={() => setPlayNext(!playNext)}>
               <ListEnd size={16} strokeWidth={1.75} />
             </IconButton>
-            <IconButton label="Reverse (R)" active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
+            <IconButton label="Reverse (⇧R)" active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
               <ReverseIcon />
             </IconButton>
           </div>

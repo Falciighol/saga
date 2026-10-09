@@ -21,6 +21,10 @@ import type {
   QueryResult,
   ClearedRenders,
   RecordLevel,
+  RecordProblem,
+  RecordSettings,
+  RecordSource,
+  RecordSources,
   RendersUsage,
   RenameOutcome,
   SampleRow,
@@ -30,6 +34,13 @@ import type {
   SourceInfo,
   Subfolder,
   SuggestedFolder,
+  TakeLanded,
+  TakeList,
+  TakeNotice,
+  TakeOptions,
+  TakeStatus,
+  TakeFormat,
+  TakesRetention,
   TempoChange,
   WaveformDetail,
 } from "./types";
@@ -164,6 +175,32 @@ export const api = {
   cancelRecording: () => invoke<void>("cancel_recording"),
   similarToRecording: (aspect: Aspect, sourceId: number | null, limit = 40) =>
     invoke<SimilarResult>("similar_to_recording", { aspect, sourceId, limit }),
+
+  /** The inputs, the apps with sound and whether everything you hear can be recorded here. */
+  recordSources: () => invoke<RecordSources>("record_sources"),
+  /** Opens a source and arms a take (or starts one at once without start on sound). Resolves to what's in the
+   *  way when it can't open, or null once it's armed. Arming the open source again only changes its options. */
+  armTake: (source: RecordSource, options: TakeOptions) => invoke<RecordProblem | null>("arm_take", { source, options }),
+  setTakeOptions: (options: TakeOptions) => invoke<void>("set_take_options", { options }),
+  /** Starts recording now, without waiting for a sound. */
+  recordTakeNow: () => invoke<void>("record_take_now"),
+  /** Keeps the take being recorded, if any, and closes the source. */
+  stopTake: () => invoke<void>("stop_take"),
+  listTakes: () => invoke<TakeList>("list_takes"),
+  /** Moves a take into the saved sounds folder's Recordings, which is in the library; returns it as it is now. */
+  saveTake: (id: number) => invoke<SampleRow>("save_take", { id }),
+  /** Moves takes (unsaved, or saved and still in Recordings) to the Trash; returns how many went. */
+  trashTakes: (ids: number[]) => invoke<number>("trash_takes", { ids }),
+  clearUnsavedTakes: () => invoke<number>("clear_unsaved_takes"),
+  recordSettings: () => invoke<RecordSettings>("record_settings"),
+  setRecordSettings: (patch: { format?: TakeFormat; retention?: TakesRetention }) =>
+    invoke<RecordSettings>("set_record_settings", { format: patch.format ?? null, retention: patch.retention ?? null }),
+  /** Keys as Tauri spells them ("CommandOrControl+Shift+R"), or null to clear. Fails when another app holds them. */
+  setRecordShortcut: (shortcut: string | null) => invoke<RecordSettings>("set_record_shortcut", { shortcut }),
+  openPrivacySettings: (what: "microphone" | "systemAudio") => invoke<void>("open_privacy_settings", { what }),
+  /** Quits after asking about unsaved takes; with `trashTakes`, they go to the Trash first. */
+  quitApp: (trashTakes: boolean) => invoke<void>("quit_app", { trashTakes }),
+
   soundMap: (kind: Kind | null, aspect: Aspect) => invoke<MapLayout>("sound_map", { kind, aspect }),
   mapMatches: (key: string, filters: Filters) => invoke<MapMatches>("map_matches", { key, filters }),
   setWindowMode: (mini: boolean, onTop: boolean) => invoke<void>("set_window_mode", { mini, onTop }),
@@ -180,6 +217,13 @@ export const events = {
     listen<RecordLevel>("record-level", (e) => cb(e.payload)),
   onTransport: (cb: (e: TransportEvent) => void): Promise<UnlistenFn> =>
     listen<TransportEvent>("lab-transport", (e) => cb(e.payload)),
+  onTakeStatus: (cb: (e: TakeStatus) => void): Promise<UnlistenFn> => listen<TakeStatus>("take-status", (e) => cb(e.payload)),
+  onTakeLanded: (cb: (e: TakeLanded) => void): Promise<UnlistenFn> => listen<TakeLanded>("take-landed", (e) => cb(e.payload)),
+  onTakeNotice: (cb: (e: TakeNotice) => void): Promise<UnlistenFn> => listen<TakeNotice>("take-notice", (e) => cb(e.payload)),
+  /** The global record shortcut was pressed, wherever focus was. */
+  onRecordShortcut: (cb: () => void): Promise<UnlistenFn> => listen("record-shortcut", () => cb()),
+  /** The window is closing with unsaved takes that go to the Trash on quit: ask first. The payload is how many. */
+  onQuitRequested: (cb: (unsaved: number) => void): Promise<UnlistenFn> => listen<number>("quit-requested", (e) => cb(e.payload)),
 };
 
 export function errorMessage(e: unknown): string {

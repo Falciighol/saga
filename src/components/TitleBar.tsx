@@ -6,6 +6,7 @@ import { useBrowse } from "../store/browse";
 import { useLibrary } from "../store/library";
 import { useUi } from "../store/ui";
 import { ProjectControls } from "./ProjectControls";
+import { RecordToggle } from "./record/RecordPanel";
 import { cx, Divider, IconButton, Kbd } from "./ui";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { WindowControls } from "./WindowControls";
@@ -62,6 +63,7 @@ export const TitleBar = forwardRef<HTMLInputElement, { onOpenSettings: () => voi
       <div data-tauri-drag-region className="h-full flex-1" />
       <ProjectControls />
       <Divider />
+      <RecordToggle />
       <IconButton label="Switch to the mini player" title="Mini player: a small window that stays next to your DAW" onClick={() => useUi.getState().setMini(true)}>
         <PictureInPicture2 size={16} strokeWidth={1.75} />
       </IconButton>

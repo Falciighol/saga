@@ -36,6 +36,13 @@ export function fmtClock(s: number): string {
   return `${m}:${sec.toFixed(2).padStart(5, "0")}`;
 }
 
+/** A take's length while it records: "0:12.4", "14:02.0". */
+export function fmtTake(s: number): string {
+  const safe = Math.max(0, s);
+  const m = Math.floor(safe / 60);
+  return `${m}:${(safe - m * 60).toFixed(1).padStart(4, "0")}`;
+}
+
 /** "124", "123.8", "123.45"; with `fixed`, always two decimals: "124.00". */
 export function fmtBpm(b: number | null | undefined, fixed = false): string {
   if (b == null) return "—";

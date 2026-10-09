@@ -47,7 +47,7 @@ function Target() {
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-raised2 text-text2">{recording ? <Mic size={15} /> : <FileAudio size={15} />}</span>
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate text-body font-semibold">{recording ? "Your recording" : target.name}</span>
-          <span className="truncate text-small text-text3">{recording ? "From the microphone" : "Dropped file"}</span>
+          <span className="truncate text-small text-text3">{recording ? "From the microphone" : (target.what ?? "Dropped file")}</span>
         </div>
       </div>
     );

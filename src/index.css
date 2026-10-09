@@ -33,6 +33,9 @@
   --on-accent: #131018;
   --accent-soft: rgba(157, 140, 255, 0.14);
   --overlay: rgba(6, 7, 8, 0.6);
+  --rec: #f0444f;
+  --rec-soft: rgba(240, 68, 79, 0.16);
+  --on-rec: #ffffff;
   --shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
   /* Black keys on the Lab keyboard; darker than any surface in either theme. */
   --key-black: #0b0c0e;
@@ -63,6 +66,9 @@
   --color-accent-wave: var(--accent-wave);
   --color-accent-soft: var(--accent-soft);
   --color-on-accent: var(--on-accent);
+  --color-rec: var(--rec);
+  --color-rec-soft: var(--rec-soft);
+  --color-on-rec: var(--on-rec);
 
   --font-sans: var(--sans);
   --font-mono: var(--mono);
@@ -199,10 +205,63 @@ input[type="range"] {
   animation: saga-map-ping 1.1s ease-out infinite;
 }
 
+/* A take landing in the tray: it unfolds from the top, out of the live waveform above it, and comes into focus. */
+@keyframes saga-take-land {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+    clip-path: inset(0 0 100% 0);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    clip-path: inset(0);
+    filter: none;
+  }
+}
+
+.animate-take-land {
+  animation: saga-take-land 380ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* The Record button's ring while a take waits for its first sound. */
+@keyframes saga-rec-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--rec-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 5px var(--rec-soft);
+  }
+}
+
+.animate-rec-breathe {
+  animation: saga-rec-breathe 1.8s ease-in-out infinite;
+}
+
+/* The REC dot while a take is being written. */
+@keyframes saga-rec-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.animate-rec-blink {
+  animation: saga-rec-blink 1.2s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-pop,
   .animate-soft-pulse,
-  .animate-map-ping {
+  .animate-map-ping,
+  .animate-take-land,
+  .animate-rec-breathe,
+  .animate-rec-blink {
     animation: none;
   }
 }

@@ -44,6 +44,39 @@ trash = "5"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
+# Arms and stops a take while the DAW has focus; off until the user picks keys in Settings.
+tauri-plugin-global-shortcut = "2"
+
+# Recording one app, or everything you hear except Saga (WASAPI process loopback), and naming the
+# apps that are playing. The same major version Tauri already builds.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Wdk_System_SystemServices",
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+# The `implement` macro (a COM callback for activating the loopback) refers to it by name.
+windows-core = "0.61"
+
+# Recording one app, or everything you hear except Saga (Core Audio process taps, macOS 14.2+), and
+# naming the apps that are playing.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSObject", "NSProcessInfo", "NSString", "NSUUID", "NSValue"] }
+objc2-core-foundation = { version = "0.3", features = ["CFDictionary"] }
+objc2-core-audio = { version = "0.3", default-features = false, features = ["std", "AudioHardware", "objc2", "objc2-core-audio-types", "objc2-foundation"] }
+objc2-core-audio-types = { version = "0.3", default-features = false, features = ["std", "CoreAudioBaseTypes", "objc2"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "libc", "NSBitmapImageRep", "NSImage", "NSImageRep", "NSRunningApplication"] }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

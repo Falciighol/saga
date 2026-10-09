@@ -287,7 +287,9 @@ export function Sidebar() {
   const expanded = useLibrary((s) => s.expanded);
   const toggle = useLibrary((s) => s.toggleExpanded);
   const collapseAll = useLibrary((s) => s.collapseAll);
-  const anyOpen = Object.values(expanded).some(Boolean);
+  const dirs = useLibrary((s) => s.dirs);
+  // A folder with nothing inside has no arrow, so it can't count as something to collapse.
+  const anyOpen = Object.entries(expanded).some(([k, open]) => open && (dirs[k]?.length ?? 0) > 0);
   const view = useBrowse((s) => s.view);
   const setView = useBrowse((s) => s.setView);
 
@@ -336,11 +338,11 @@ export function Sidebar() {
       },
     ]);
 
-  const sourceMenu = (e: React.MouseEvent, s: SourceInfo) =>
+  const sourceMenu = (e: React.MouseEvent, s: SourceInfo, hasChildren: boolean) =>
     openContextMenu(e, [
       { label: "Rescan", icon: <RefreshCw size={14} />, onSelect: () => void useLibrary.getState().rescan(s.id) },
       { label: revealLabel(), onSelect: () => void reveal(s.path) },
-      collapseItem(s.id, ""),
+      ...(hasChildren ? [collapseItem(s.id, "")] : []),
       ...(s.excluded.length
         ? [{ label: "Include excluded folder", icon: <FolderPlus size={14} />, submenu: s.excluded.map((dir) => ({ label: dir, onSelect: () => void includeFolder(s, dir) })) }]
         : []),
@@ -407,19 +409,22 @@ export function Sidebar() {
           </div>
           {sources.map((s) => {
             const key = dirKey(s.id, "");
-            const open = !!expanded[key];
+            const hasChildren = (dirs[key]?.length ?? 0) > 0;
+            const open = hasChildren && !!expanded[key];
             return (
               <div key={s.id}>
                 <div className="relative">
-                  <button
-                    type="button"
-                    aria-label={open ? `Collapse ${s.name}` : `Expand ${s.name}`}
-                    title={`${altKey}-click to close everything inside too`}
-                    onClick={(e) => toggleFolder(e, s.id, "")}
-                    className="absolute top-[7px] left-1 z-10 grid h-4 w-4 place-items-center rounded text-text3 hover:text-text"
-                  >
-                    {open ? <ChevronDown size={12} strokeWidth={2.25} /> : <ChevronRight size={12} strokeWidth={2.25} />}
-                  </button>
+                  {hasChildren && (
+                    <button
+                      type="button"
+                      aria-label={open ? `Collapse ${s.name}` : `Expand ${s.name}`}
+                      title={`${altKey}-click to close everything inside too`}
+                      onClick={(e) => toggleFolder(e, s.id, "")}
+                      className="absolute top-[7px] left-1 z-10 grid h-4 w-4 place-items-center rounded text-text3 hover:text-text"
+                    >
+                      {open ? <ChevronDown size={12} strokeWidth={2.25} /> : <ChevronRight size={12} strokeWidth={2.25} />}
+                    </button>
+                  )}
                   <NavItem
                     icon={s.online ? <Folder size={16} strokeWidth={1.75} /> : <HardDrive size={16} strokeWidth={1.75} />}
                     label={s.name}
@@ -429,9 +434,9 @@ export function Sidebar() {
                     active={sameView(view, { type: "folder", sourceId: s.id, dir: "" })}
                     onClick={() => {
                       go({ type: "folder", sourceId: s.id, dir: "" });
-                      if (!open) toggle(s.id, "");
+                      if (hasChildren && !open) toggle(s.id, "");
                     }}
-                    onContextMenu={(e) => sourceMenu(e, s)}
+                    onContextMenu={(e) => sourceMenu(e, s, hasChildren)}
                   />
                 </div>
                 {open && <FolderTree source={s} dir="" depth={1} />}

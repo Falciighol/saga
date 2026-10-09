@@ -1,6 +1,7 @@
 //! Tauri commands. All are async so database work never blocks the UI thread.
 
 use crate::audio::{output_devices, Cmd};
+use crate::capture::{self, Problem, SourceSpec, TakeOptions};
 use crate::dsp::ProcessParams;
 use crate::indexer::skip_name;
 use crate::model::*;
@@ -9,7 +10,7 @@ use crate::render::{self, file_name, free_path, render_key, render_name, render_
 use crate::sequence::{SeqNote, Sequence};
 use crate::sounds::{Aspect, SoundIndex};
 use crate::synth::{NoteEvent, Preset};
-use crate::{analysis, features, map, rename, AppState};
+use crate::{analysis, features, map, rename, takes, AppState};
 use base64::Engine as _;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -832,6 +833,171 @@ pub async fn similar_to_recording(state: State<'_, AppState>, aspect: Aspect, so
 #[tauri::command]
 pub async fn cancel_recording(state: State<'_, AppState>) -> CmdResult<()> {
     state.recorder.cancel();
+    Ok(())
+}
+
+// ---- the Record panel ----
+
+pub(crate) fn capture_ctx<R: Runtime>(app: &AppHandle<R>, state: &AppState) -> capture::Ctx {
+    let (emitter, badge) = (app.clone(), app.clone());
+    capture::Ctx {
+        db: state.db.clone(),
+        indexer: state.indexer.clone(),
+        takes_dir: state.takes.dir.clone(),
+        takes_source: state.takes.source,
+        emit: Arc::new(move |name, payload| {
+            let _ = emitter.emit(name, payload);
+        }),
+        on_recording: Arc::new(move |on| crate::show_recording(&badge, on)),
+    }
+}
+
+/// The inputs, the apps with sound and whether everything you hear can be recorded here.
+#[tauri::command]
+pub async fn record_sources() -> CmdResult<capture::RecordSources> {
+    tauri::async_runtime::spawn_blocking(capture::sources).await.map_err(err)
+}
+
+/// Opens a source and arms a take (or starts one at once without start on sound). Arming the open
+/// source again only changes its options. Returns what's in the way when it can't open, such as a
+/// missing permission.
+#[tauri::command]
+pub async fn arm_take<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>, source: SourceSpec, options: TakeOptions) -> CmdResult<Option<Problem>> {
+    let ctx = capture_ctx(&app, &state);
+    let capture = state.capture.clone();
+    tauri::async_runtime::spawn_blocking(move || capture.arm(source, options, ctx).err()).await.map_err(err)
+}
+
+/// Changes how the open source starts and ends takes (start on sound, stop after silence, keep going, threshold).
+#[tauri::command]
+pub async fn set_take_options(state: State<'_, AppState>, options: TakeOptions) -> CmdResult<()> {
+    state.capture.set_options(options);
+    Ok(())
+}
+
+/// Starts recording now, without waiting for a sound.
+#[tauri::command]
+pub async fn record_take_now(state: State<'_, AppState>) -> CmdResult<()> {
+    state.capture.record_now();
+    Ok(())
+}
+
+/// Keeps the take being recorded, if any, and closes the source.
+#[tauri::command]
+pub async fn stop_take(state: State<'_, AppState>) -> CmdResult<()> {
+    let capture = state.capture.clone();
+    tauri::async_runtime::spawn_blocking(move || capture.stop()).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn list_takes(state: State<'_, AppState>) -> CmdResult<takes::TakeList> {
+    let (db, t) = (state.db.clone(), state.takes.clone());
+    tauri::async_runtime::spawn_blocking(move || takes::list(&db, &t)).await.map_err(err)?
+}
+
+/// Moves a take into the saved sounds folder's Recordings, which is in the library. Dragging a take
+/// out does this first, since the DAW project will refer to the file.
+#[tauri::command]
+pub async fn save_take(state: State<'_, AppState>, id: i64) -> CmdResult<SampleRow> {
+    let (db, indexer, t, root) = (state.db.clone(), state.indexer.clone(), state.takes.clone(), state.saved_root());
+    tauri::async_runtime::spawn_blocking(move || takes::save(&db, &indexer, &t, &root, id)).await.map_err(err)?
+}
+
+/// Moves takes (unsaved, or saved and still in Recordings) to the Trash. Returns how many went.
+#[tauri::command]
+pub async fn trash_takes(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<usize> {
+    let (db, t, root) = (state.db.clone(), state.takes.clone(), state.saved_root());
+    tauri::async_runtime::spawn_blocking(move || takes::trash(&db, &t, &root, &ids)).await.map_err(err)?
+}
+
+/// Moves every unsaved take to the Trash.
+#[tauri::command]
+pub async fn clear_unsaved_takes(state: State<'_, AppState>) -> CmdResult<usize> {
+    let (db, t, root) = (state.db.clone(), state.takes.clone(), state.saved_root());
+    tauri::async_runtime::spawn_blocking(move || takes::clear_unsaved(&db, &t, &root, None)).await.map_err(err)?
+}
+
+/// Settings › Recording.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordSettings {
+    /// "24" or "float".
+    format: String,
+    /// What happens to unsaved takes: "keep", "week" or "quit".
+    retention: String,
+    /// The shortcut that arms, records and stops from anywhere, as Tauri spells it; null when unset.
+    shortcut: Option<String>,
+    /// Where saved takes go.
+    recordings: String,
+}
+
+fn record_settings_of(state: &AppState) -> RecordSettings {
+    let get = |key: &str, default: &str| state.db.get_setting(key).unwrap_or_else(|| default.to_string());
+    RecordSettings {
+        format: get(capture::TAKE_FORMAT_SETTING, "24"),
+        retention: get(capture::TAKES_RETENTION_SETTING, "keep"),
+        shortcut: state.db.get_setting(capture::RECORD_SHORTCUT_SETTING),
+        recordings: state.saved_root().join(render::RECORDINGS_DIR).to_string_lossy().to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn record_settings(state: State<'_, AppState>) -> CmdResult<RecordSettings> {
+    Ok(record_settings_of(&state))
+}
+
+/// `format`: "24" or "float". `retention`: "keep", "week" or "quit". Either can be left out.
+#[tauri::command]
+pub async fn set_record_settings(state: State<'_, AppState>, format: Option<String>, retention: Option<String>) -> CmdResult<RecordSettings> {
+    if let Some(f) = format {
+        if !matches!(f.as_str(), "24" | "float") {
+            return Err(format!("Unknown take format {f}"));
+        }
+        state.db.set_setting(capture::TAKE_FORMAT_SETTING, Some(&f)).map_err(err)?;
+    }
+    if let Some(r) = retention {
+        if !matches!(r.as_str(), "keep" | "week" | "quit") {
+            return Err(format!("Unknown choice for unsaved takes: {r}"));
+        }
+        state.db.set_setting(capture::TAKES_RETENTION_SETTING, Some(&r)).map_err(err)?;
+    }
+    Ok(record_settings_of(&state))
+}
+
+/// Sets the shortcut that arms, records and stops while another app (the DAW) has focus, or clears
+/// it with null. Fails when another app already holds those keys.
+#[tauri::command]
+pub async fn set_record_shortcut<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>, shortcut: Option<String>) -> CmdResult<RecordSettings> {
+    let shortcut = shortcut.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let old = state.db.get_setting(capture::RECORD_SHORTCUT_SETTING);
+    crate::register_record_shortcut(&app, old.as_deref(), shortcut.as_deref())?;
+    state.db.set_setting(capture::RECORD_SHORTCUT_SETTING, shortcut.as_deref()).map_err(err)?;
+    Ok(record_settings_of(&state))
+}
+
+/// Opens the system's privacy settings for the microphone (`"microphone"`) or for recording other
+/// apps' sound (`"systemAudio"`).
+#[tauri::command]
+pub async fn open_privacy_settings<R: Runtime>(app: AppHandle<R>, what: String) -> CmdResult<()> {
+    let url = match (what.as_str(), cfg!(target_os = "macos")) {
+        ("microphone", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        ("systemAudio", true) => "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
+        ("microphone", false) => "ms-settings:privacy-microphone",
+        _ => return Err("There's no setting for that here".into()),
+    };
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_url(url, None::<&str>).map_err(err)
+}
+
+/// Quits after the window asked what to do with unsaved takes ("Move to the Trash when Saga quits").
+#[tauri::command]
+pub async fn quit_app<R: Runtime>(app: AppHandle<R>, state: State<'_, AppState>, trash_takes: bool) -> CmdResult<()> {
+    if trash_takes {
+        let (db, t, root) = (state.db.clone(), state.takes.clone(), state.saved_root());
+        tauri::async_runtime::spawn_blocking(move || takes::clear_unsaved(&db, &t, &root, None)).await.map_err(err)??;
+    }
+    state.quit_confirmed.store(true, Ordering::Relaxed);
+    app.exit(0);
     Ok(())
 }
 

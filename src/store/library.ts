@@ -48,9 +48,10 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     try {
       const [sources, collections, stats] = await Promise.all([api.listSources(), api.collections(), api.stats()]);
       set({ sources, collections, stats, loaded: true });
-      // Keep open folders in the tree current.
-      for (const key of Object.keys(get().expanded)) {
-        if (!get().expanded[key]) continue;
+      // Every source's top level is always loaded, so the sidebar knows whether to offer an arrow. Then keep open folders current.
+      const wanted = new Set(sources.map((s) => dirKey(s.id, "")));
+      for (const key of Object.keys(get().expanded)) if (get().expanded[key]) wanted.add(key);
+      for (const key of wanted) {
         const [id, ...rest] = key.split(":");
         void get().loadDirs(Number(id), rest.join(":"));
       }

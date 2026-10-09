@@ -127,6 +127,16 @@ const ADDED_COLUMNS: &[(&str, &str)] = &[
     ("created", "INTEGER"),
 ];
 
+/// Columns added to `sources` after the first release.
+const ADDED_SOURCE_COLUMNS: &[(&str, &str)] = &[
+    // Saga's own folder of unsaved takes: its samples play, render and get analyzed like any other,
+    // but stay out of browsing, search, the sound map and the folder list until they're saved.
+    ("hidden", "INTEGER NOT NULL DEFAULT 0"),
+];
+
+/// Leaves out samples in hidden sources (unsaved takes) wherever the library is browsed.
+pub const VISIBLE: &str = "s.source_id NOT IN (SELECT id FROM sources WHERE hidden = 1)";
+
 const ROW_COLS: &str = "s.id, s.source_id, s.path, s.name, s.ext, s.dir, src.name, s.duration, s.sample_rate, \
     s.channels, s.bit_depth, s.bpm, s.bpm_source, s.key_pc, s.key_mode, s.kind, s.category, s.auto_tags, \
     s.user_tags, s.peak_db, s.loudness, s.peaks, s.status, s.favorite, src.online, s.play_count, s.key_source, s.created, s.added_at";
@@ -350,6 +360,13 @@ impl Db {
                 write.execute_batch(&format!("ALTER TABLE samples ADD COLUMN {col} {def}"))?;
             }
         }
+        let existing: Vec<String> =
+            write.prepare("SELECT name FROM pragma_table_info('sources')")?.query_map([], |r| r.get(0))?.collect::<DbResult<_>>()?;
+        for (col, def) in ADDED_SOURCE_COLUMNS {
+            if !existing.iter().any(|c| c == col) {
+                write.execute_batch(&format!("ALTER TABLE sources ADD COLUMN {col} {def}"))?;
+            }
+        }
         let read = Connection::open(path)?;
         configure(&read)?;
         Ok(Db { write: Mutex::new(write), read: Mutex::new(read), changes: AtomicU64::new(1) })
@@ -421,11 +438,12 @@ impl Db {
         Ok(())
     }
 
+    /// The library folders. Saga's hidden folder of unsaved takes isn't one of them.
     pub fn sources(&self) -> DbResult<Vec<SourceInfo>> {
         let conn = self.read.lock();
         let mut stmt = conn.prepare(
             "SELECT src.id, src.path, src.name, src.online, (SELECT COUNT(*) FROM samples s WHERE s.source_id = src.id) \
-             FROM sources src ORDER BY src.name COLLATE NOCASE",
+             FROM sources src WHERE src.hidden = 0 ORDER BY src.name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(SourceInfo { id: r.get(0)?, path: r.get(1)?, name: r.get(2)?, online: r.get::<_, i64>(3)? == 1, count: r.get(4)?, excluded: Vec::new() })
@@ -461,6 +479,49 @@ impl Db {
 
     pub fn set_source_online(&self, id: i64, online: bool) -> DbResult<()> {
         self.write.lock().execute("UPDATE sources SET online = ? WHERE id = ?", params![online as i64, id])?;
+        self.changed();
+        Ok(())
+    }
+
+    // ---- takes ----
+
+    /// The hidden source that holds unsaved takes at `path`, made the first time.
+    pub fn takes_source(&self, path: &str) -> DbResult<i64> {
+        let conn = self.write.lock();
+        conn.execute("INSERT OR IGNORE INTO sources(path, name, added_at, hidden) VALUES(?, 'Takes', ?, 1)", params![path, now()])?;
+        conn.execute("UPDATE sources SET hidden = 1, online = 1 WHERE path = ?", [path])?;
+        conn.query_row("SELECT id FROM sources WHERE path = ?", [path], |r| r.get(0))
+    }
+
+    /// Every sample in a source, newest first: the unsaved takes, for the takes source.
+    pub fn takes(&self, source_id: i64) -> DbResult<Vec<SampleRow>> {
+        let conn = self.read.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {ROW_COLS} FROM samples s JOIN sources src ON src.id = s.source_id WHERE s.source_id = ? ORDER BY s.added_at DESC, s.id DESC"
+        ))?;
+        let rows = stmt.query_map([source_id], row_to_sample)?;
+        rows.collect()
+    }
+
+    /// The id of the sample stored at `path`.
+    pub fn id_for_path(&self, path: &str) -> DbResult<Option<i64>> {
+        self.read.lock().query_row("SELECT id FROM samples WHERE path = ?", [path], |r| r.get(0)).optional()
+    }
+
+    /// Points a sample at its file's new place in another source (`dir` relative to it, `/`-separated;
+    /// `name` without the extension, which a free name may have changed), keeping its id and so
+    /// everything about it: its description, tempo and key set by hand, plays.
+    pub fn move_sample(&self, id: i64, source_id: i64, path: &str, dir: &str, name: &str, size: i64, mtime: i64) -> DbResult<()> {
+        let mut conn = self.write.lock();
+        let tx = conn.transaction()?;
+        // A row left over for a file that's gone would hold the path.
+        tx.execute("DELETE FROM samples WHERE path = ?1 AND id != ?2", params![path, id])?;
+        tx.execute(
+            "UPDATE samples SET source_id = ?, path = ?, dir = ?, name = ?, size = ?, mtime = ? WHERE id = ?",
+            params![source_id, path, dir, name, size, mtime, id],
+        )?;
+        refresh_fts(&tx, id)?;
+        tx.commit()?;
         self.changed();
         Ok(())
     }
@@ -615,7 +676,7 @@ impl Db {
         self.read.lock().query_row(
             "SELECT COALESCE(SUM(s.status = 1 AND s.features IS NOT NULL), 0), \
              COALESCE(SUM(s.status = 0 OR (s.status = 1 AND s.analysis_version < ?1) OR (s.status = 2 AND s.analysis_version < ?2)), 0) \
-             FROM samples s JOIN sources src ON src.id = s.source_id WHERE src.online = 1",
+             FROM samples s JOIN sources src ON src.id = s.source_id WHERE src.online = 1 AND src.hidden = 0",
             [analysis::VERSION, analysis::DECODE_VERSION],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -625,7 +686,7 @@ impl Db {
         let conn = self.read.lock();
         let mut stmt = conn.prepare(
             "SELECT s.id, s.kind, s.source_id, s.category, s.features FROM samples s JOIN sources src ON src.id = s.source_id \
-             WHERE s.status = 1 AND s.features IS NOT NULL AND src.online = 1 ORDER BY s.id",
+             WHERE s.status = 1 AND s.features IS NOT NULL AND src.online = 1 AND src.hidden = 0 ORDER BY s.id",
         )?;
         let rows = stmt.query_map([], |r| {
             let blob: Vec<u8> = r.get(4)?;
@@ -897,8 +958,10 @@ impl Db {
     pub fn stats(&self) -> DbResult<LibraryStats> {
         let conn = self.read.lock();
         conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(favorite), 0), COALESCE(SUM(kind = 1), 0), COALESCE(SUM(kind = 0), 0), \
-             COALESCE(SUM(added_at >= ?1), 0), COALESCE(SUM(last_played IS NOT NULL), 0) FROM samples",
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(favorite), 0), COALESCE(SUM(kind = 1), 0), COALESCE(SUM(kind = 0), 0), \
+                 COALESCE(SUM(added_at >= ?1), 0), COALESCE(SUM(last_played IS NOT NULL), 0) FROM samples s WHERE {VISIBLE}"
+            ),
             [now() - query::RECENT_DAYS * 86_400],
             |r| {
                 Ok(LibraryStats {

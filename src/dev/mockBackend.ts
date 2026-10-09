@@ -8,6 +8,7 @@ import { fittingKeys, scaleFit, scaleNotes } from "../lib/theory";
 import { groupOf } from "../lib/soundmap";
 import type { Collection, Facets, Filters, KeyChange, PitchProfile, QueryRequest, SampleRow, SourceInfo, TempoChange } from "../lib/types";
 import pkg from "../../package.json";
+import { mockRecord, TAKES } from "./mockRecord";
 import { BPM_HIST_BINS, BPM_HIST_MIN, BPM_HIST_STEP, DUR_HIST_BINS, DUR_HIST_MAX, DUR_HIST_MIN } from "../lib/types";
 
 function rng(seed: number) {
@@ -181,6 +182,11 @@ function applyExclusions() {
     return src != null && !src.excluded.some((dir) => r.dir === dir || r.dir.startsWith(`${dir}/`)) && !r.dir.split("/").some((seg) => seg && nameExcluded(seg));
   });
   void emit("library-changed");
+}
+
+/** A sample in the library, or an unsaved take. */
+function rowById(id: number): SampleRow | undefined {
+  return ROWS.find((r) => r.id === id) ?? TAKES.find((r) => r.id === id);
 }
 
 /** Tempo and key as found, to go back to after setting them by hand. */
@@ -636,6 +642,24 @@ export function installMockBackend() {
   mockIPC(
     (cmd, raw) => {
       const args = (raw ?? {}) as Record<string, unknown>;
+      const recorded = mockRecord(
+        cmd,
+        args,
+        (row) => {
+          ALL_ROWS.push(row);
+          applyExclusions();
+        },
+        (ids) => {
+          const before = ALL_ROWS.length;
+          for (const id of ids) {
+            const i = ALL_ROWS.findIndex((r) => r.id === id);
+            if (i >= 0) ALL_ROWS.splice(i, 1);
+          }
+          if (ALL_ROWS.length !== before) applyExclusions();
+          return before - ALL_ROWS.length;
+        },
+      );
+      if (recorded !== undefined) return recorded;
       switch (cmd) {
         case "list_sources":
           return SOURCES.map((s) => ({ ...s, count: ROWS.filter((r) => r.sourceId === s.id).length }));
@@ -693,11 +717,11 @@ export function installMockBackend() {
         case "get_facets":
           return facets(args.filters as Filters);
         case "get_sample": {
-          const r = ROWS.find((x) => x.id === args.id);
+          const r = rowById(args.id as number);
           return r ? { ...r } : null;
         }
         case "get_samples":
-          return (args.ids as number[]).flatMap((id) => ROWS.filter((r) => r.id === id).map((r) => ({ ...r })));
+          return (args.ids as number[]).flatMap((id) => [rowById(id)].filter((r): r is SampleRow => r != null).map((r) => ({ ...r })));
         case "query_ids": {
           const filters = args.filters as Filters;
           if (!args.sort) return ROWS.filter((r) => matches(r, filters)).map((r) => r.id);
@@ -705,7 +729,7 @@ export function installMockBackend() {
           return query(req).rows.map((r) => r.id);
         }
         case "set_sample_values": {
-          const rows = (args.ids as number[]).map((id) => ROWS.find((r) => r.id === id)).filter((r): r is SampleRow => r != null);
+          const rows = (args.ids as number[]).map((id) => rowById(id)).filter((r): r is SampleRow => r != null);
           for (const r of rows) setValues(r, args.tempo as TempoChange | null, args.key as KeyChange | null);
           return rows.map((r) => ({ ...r }));
         }
@@ -721,7 +745,7 @@ export function installMockBackend() {
           return (args.ids as number[]).map((id) => ({ id, created: 1_727_000_000 + id * 86_400, modified: 1_727_000_000 + id * 90_000 }));
         case "rename_samples":
           return (args.renames as { id: number; name: string }[]).map(({ id, name }) => {
-            const r = ROWS.find((x) => x.id === id);
+            const r = rowById(id);
             if (!r) return { id, from: "", to: name, error: "No longer in the library" };
             if (/[/\\:*?"<>|]/.test(name)) return { id, from: r.name, to: name, error: "Names can't contain / \\ : * ? \" < > |" };
             const from = r.name;
@@ -730,7 +754,7 @@ export function installMockBackend() {
             return { id, from, to: name, error: null };
           });
         case "pitch_profile": {
-          const r = ROWS.find((x) => x.id === args.id);
+          const r = rowById(args.id as number);
           return r ? mockProfile(r) : null;
         }
         case "library_stats":
@@ -779,7 +803,7 @@ export function installMockBackend() {
           const bits = new Uint8Array(Math.ceil(ids.length / 8));
           let matched = 0;
           ids.forEach((id, i) => {
-            const r = ROWS.find((x) => x.id === id)!;
+            const r = rowById(id)!;
             if (matches(r, f)) {
               bits[i >> 3] |= 1 << (i & 7);
               matched++;
@@ -795,12 +819,12 @@ export function installMockBackend() {
           return null;
         case "set_favorite":
           for (const id of args.ids as number[]) {
-            const r = ROWS.find((x) => x.id === id);
+            const r = rowById(id);
             if (r) r.favorite = args.favorite as boolean;
           }
           return null;
         case "set_user_tags": {
-          const r = ROWS.find((x) => x.id === args.id)!;
+          const r = rowById(args.id as number)!;
           r.userTags = (args.tags as string[]).map((t) => t.toLowerCase());
           r.tags = [...new Set([...r.tags, ...r.userTags])];
           return r;
@@ -822,7 +846,7 @@ export function installMockBackend() {
         case "sample_collections":
           return [...members.entries()].filter(([, s]) => s.has(args.id as number)).map(([c]) => c);
         case "play": {
-          const r = ROWS.find((x) => x.id === args.id)!;
+          const r = rowById(args.id as number)!;
           r.playCount++;
           const params = args.params as MockParams;
           const start = args.start as number | null;
@@ -912,7 +936,7 @@ export function installMockBackend() {
         case "save_variation":
           return `/Users/me/Music/Saga/Variations/${args.label}.wav`;
         case "waveform_detail": {
-          const r = ROWS.find((x) => x.id === args.id)!;
+          const r = rowById(args.id as number)!;
           const env = Uint8Array.from(atob(r.peaks!), (c) => c.charCodeAt(0));
           const d = r.duration ?? 1;
           const n = args.buckets as number;

@@ -30,6 +30,14 @@ interface Base {
   wave2: string;
   overlay: string;
   shadow: string;
+  /** Recording, and only recording: the Record button, the REC dot, a take being written. A cooler,
+   *  deeper red than the Coral accent and the red of destructive actions, so it reads as "recording"
+   *  next to every accent. */
+  rec: string;
+  /** `rec` as a quiet fill, for the armed ring. */
+  recSoft: string;
+  /** Marks drawn on `rec`, such as the stop square. */
+  onRec: string;
 }
 
 const GRAPHITE_DARK: Base = {
@@ -47,6 +55,9 @@ const GRAPHITE_DARK: Base = {
   wave2: "#747981",
   overlay: "rgba(6, 7, 8, 0.6)",
   shadow: "0 18px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04)",
+  rec: "#F0444F",
+  recSoft: "rgba(240, 68, 79, 0.16)",
+  onRec: "#FFFFFF",
 };
 
 const GRAPHITE_LIGHT: Base = {
@@ -64,6 +75,9 @@ const GRAPHITE_LIGHT: Base = {
   wave2: "#8F8A80",
   overlay: "rgba(40, 36, 28, 0.28)",
   shadow: "0 18px 48px rgba(40, 30, 10, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.05)",
+  rec: "#D42536",
+  recSoft: "rgba(212, 37, 54, 0.14)",
+  onRec: "#FFFFFF",
 };
 
 export interface Palette extends Base {
@@ -115,6 +129,9 @@ const VAR_NAMES: Record<keyof Palette, string> = {
   wave2: "--wave2",
   overlay: "--overlay",
   shadow: "--shadow",
+  rec: "--rec",
+  recSoft: "--rec-soft",
+  onRec: "--on-rec",
   accent: "--accent",
   accentInk: "--accent-ink",
   accentWave: "--accent-wave",

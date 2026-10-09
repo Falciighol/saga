@@ -215,7 +215,8 @@ pub fn build_where(p: &ParsedSearch, omit: Omit, now: i64) -> Where {
     let f = &p.filters;
     let mut params: Vec<Value> = Vec::new();
     let mut join = String::new();
-    let mut w: Vec<String> = vec!["1 = 1".into()];
+    // Unsaved takes are reached through the takes tray, never by browsing.
+    let mut w: Vec<String> = vec![crate::db::VISIBLE.into()];
 
     if let Some(fts) = &p.fts {
         join = "JOIN (SELECT rowid AS rid, bm25(samples_fts) AS rank FROM samples_fts WHERE samples_fts MATCH ?) f ON f.rid = s.id".into();

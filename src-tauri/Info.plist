@@ -3,6 +3,8 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Saga listens only while you use Find by recording, to find samples that sound like what you hum, beatbox or play.</string>
+  <string>Saga listens to an input only while you record a take, or use Find by recording to find samples that sound like what you hum, beatbox or play.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Saga records the sound of the app you pick, or everything you hear, only while you record a take.</string>
 </dict>
 </plist>

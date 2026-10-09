@@ -75,6 +75,11 @@ src-tauri/src
   sounds.rs    in-memory similarity index (standardized features, per-aspect distances)
   map.rs       sound map layout: t-SNE of landmark samples, everything else placed among them
   record.rs    microphone capture for Find by recording
+  capture.rs   the Record panel's takes: sources, start on sound, stop on silence, writing as it
+               records, trimming, crash recovery
+  capture_win.rs  Windows: WASAPI process loopback (one app, or everything but Saga), app list
+  capture_mac.rs  macOS: Core Audio process taps (one app, or everything but Saga), app list
+  takes.rs     unsaved takes: saving into Recordings, the Trash, clearing old ones
   synth.rs     Lab note voices (keys, pad, pluck) mixed into the preview
   sequence.rs  Lab progression player: beat grid on the mixer clock, loop following, scheduling
   midi.rs      progressions as Standard MIDI Files for dragging into a DAW
@@ -96,10 +101,13 @@ src
   store/       Zustand stores: browse (queries, paging, selection, picked samples), library,
                player, prefs, project (tempo/key/scale, and per-sample edits), editor, ui
                (list/map/lab, mini player), similar, soundmap, lab, updates, whatsNew (the card
-               after an update and the What's new dialog), toasts
+               after an update and the What's new dialog), record (the Record panel, the live
+               waveform, takes), toasts
   hooks/       useHotkeys (every app-wide keyboard shortcut), useTheme (theme, fonts, size)
   components/lab/  the Lab: scale list, pitch circle, keyboard, chords, progressions, key finder,
                tempo & tuning, side panels
+  components/record/  the Record panel, its live stage, controls and takes, and the mini player strip
+  components/settings/  Settings sections in files of their own (Recording)
   components/  UI; shared buttons, switches, chips and labels are in ui.tsx, menus in Menu.tsx; the
                list's columns (cells, header, the Columns menu) in ListColumns.tsx; the What's new
                card and dialog in WhatsNew.tsx
@@ -114,7 +122,7 @@ src
                fonts, interface size (scale), platform (⌘ or Ctrl), autoTitle (tooltips for
                cut-off text), changelog (reads the bundled CHANGELOG.md for What's new),
                waveform drawing, formatting
-  dev/         the mock backend for working on the UI in a browser
+  dev/         the mock backend for working on the UI in a browser (mockRecord.ts pretends to record)
 ```
 
 [`CLAUDE.md`](../CLAUDE.md) and [`.claude/rules/`](../.claude/rules) hold the conventions,

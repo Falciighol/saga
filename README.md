@@ -24,7 +24,7 @@ and Intel) or Windows.
 - **It plays in your key.** Set a project tempo and key once, and loops follow while you
   audition. Drag one into your DAW and you get exactly what you heard.
 - **It stays out of your DAW's way.** Analysis runs at low priority on half your CPU cores, and
-  the audio device is only held while you preview.
+  audio devices are only held while you preview or record.
 - **It's private.** Everything happens on your computer. The only thing Saga fetches from the
   internet is the update check, and you can turn that off.
 
@@ -135,6 +135,25 @@ so DAW projects that use them keep working; Settings shows how much space they t
 old ones to the Trash. You can also **Export…** to any folder, or **Save variation** to add it to your library with the new
 tempo and key in its name (`Arp Loop (124 BPM, Bm, reversed).wav`).
 
+### Record from anything
+
+Press `R` for the Record panel and pick what to record: an input (a mic, or an instrument on any
+channel or pair of your interface), one app (a browser tab, a player, a plugin's standalone), or
+everything you hear except Saga's own sounds. Press `R` again to arm. The take starts on the first
+sound, keeps its attack, and ends after a moment of silence. With **Keep going**, every sound
+becomes its own take, so eight hits on a drum machine give you eight takes.
+
+A take is a sample straight away: Saga trims the silence around it and finds its tempo and key
+(marked ≈), so Sync and Match key work on it like on anything in your library. Drag it into your
+DAW, save it (or press Save all above the list to keep every take), or move it to the Trash. Dragging saves it too, into `Music/Saga/Recordings`, which
+is part of your library, because your project will use the file. Takes are WAV at the source's
+own sample rate, 24-bit or 32-bit float.
+
+Set a shortcut in Settings › Recording to arm, record and stop while your DAW has focus, and the
+Dock or taskbar icon shows a red dot while a take records. The mini player has the same controls,
+with the newest take ready to drag. Recording one app, or everything you hear, needs macOS 14.2 or
+Windows 10 version 2004 or later, and macOS asks once for permission to record other apps.
+
 ### Find similar and the sound map
 
 Press `G` (or right-click › Find similar) for the closest-sounding samples in your library,
@@ -174,8 +193,8 @@ Press `H` for a workspace for the harmony of a track.
 
 ### And also
 
-- **Mini player**: a narrow window with search, the list and the preview that can stay on top
-  next to your DAW.
+- **Mini player**: a narrow window with search, the list, the preview and recording that can
+  stay on top next to your DAW.
 - **Themes and fonts**: Graphite dark and light, six accent colors, a choice of bundled interface
   and numbers fonts (they work offline) or any font installed on your computer, and an interface
   size from 75% to 200%.
@@ -226,7 +245,7 @@ On Windows, use Ctrl where these say ⌘.
 | Processing | |
 | --- | --- |
 | `E` | Editor |
-| `R` | Reverse |
+| `⇧R` | Reverse |
 | `[ ]` | Semitone down / up (through the key's scale with scale lock) |
 | `S` / `K` | Sync to project tempo / match project key |
 | `T` | Tap tempo |
@@ -236,6 +255,12 @@ On Windows, use Ctrl where these say ⌘.
 | `M` | Sound map or list (on the map, `↑ ↓` walk the similar sounds) |
 | `G` | Find similar |
 | `H` | The Lab (inside it, `↑ ↓ ← →` pick scales, roots, bars and chords, `Space` plays, `⌫` clears a bar and `Esc` stops) |
+
+| Recording | |
+| --- | --- |
+| `R` | Record panel, then arm, record now and stop |
+| `Esc` | Disarm, or stop and keep the take |
+| `⌫` / `⌘S` / `F2` | In the takes: move to the Trash / save to Recordings / rename |
 
 ## Building from source
 

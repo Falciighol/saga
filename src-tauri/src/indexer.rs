@@ -208,11 +208,11 @@ fn created_secs(m: &std::fs::Metadata) -> i64 {
     m.created().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or_else(|| mtime_secs(m))
 }
 
-fn mtime_secs(m: &std::fs::Metadata) -> i64 {
+pub(crate) fn mtime_secs(m: &std::fs::Metadata) -> i64 {
     m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
-fn rel_dir(root: &Path, file: &Path) -> String {
+pub(crate) fn rel_dir(root: &Path, file: &Path) -> String {
     file.parent().and_then(|p| rel_path(root, p)).unwrap_or_default()
 }
 
@@ -712,6 +712,31 @@ impl Indexer {
     /// Claims a queued file for analysis. None when it isn't queued, or someone already took it.
     fn take_job(&self, id: i64) -> Option<PendingFile> {
         self.queued.lock().get_mut(&id).and_then(|q| q.job.take())
+    }
+
+    /// Indexes one new file of a source right away, without waiting for scans already queued, and
+    /// has it analyzed ahead of the queue: a take someone just recorded. Returns its id.
+    pub fn add_file_now(&self, source_id: i64, source_name: &str, root: &Path, file: &Path) -> Result<i64, String> {
+        let md = std::fs::metadata(file).map_err(|e| e.to_string())?;
+        let path = file.to_string_lossy().to_string();
+        let existing = self.db.id_for_path(&path).map_err(|e| e.to_string())?;
+        let scanned = ScannedFile {
+            dir: rel_dir(root, file),
+            name: file.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            ext: file.extension().map(|s| s.to_string_lossy().to_ascii_lowercase()).unwrap_or_default(),
+            path: path.clone(),
+            size: md.len() as i64,
+            mtime: mtime_secs(&md),
+            created: Some(created_secs(&md)),
+            existing,
+        };
+        self.db.upsert_files(source_id, source_name, std::slice::from_ref(&scanned)).map_err(|e| e.to_string())?;
+        let id = self.db.id_for_path(&path).map_err(|e| e.to_string())?.ok_or("The take wasn't stored")?;
+        self.enqueue_pending(Some(source_id));
+        self.prioritize(id);
+        self.counters.library_now.store(true, Ordering::Relaxed);
+        self.counters.library_dirty.store(true, Ordering::Relaxed);
+        Ok(id)
     }
 
     /// Has a queued sample analyzed next, ahead of everything else waiting, because someone is

@@ -18,6 +18,21 @@ Write for producers, not developers: say what changed for them, not which file c
 
 ## Unreleased
 
+### Good to know
+- **Reverse moved to `⇧ R`**: `R` now opens the new Record panel.
+
+### New
+- **Record from anything**: press `R` to record an input, one app or everything you hear. A take starts on the first sound, ends on silence, and gets its tempo and key straight away, so Sync and Match key work on it. Drag it into your DAW, save it to Recordings (or every take at once with Save all), or move it to the Trash.
+- **Keep going**: every sound becomes its own take, so a run of drum hits turns into separate one-shots.
+- **Record while your DAW has focus**: set a shortcut in Settings › Recording to arm, record and stop from anywhere. The Dock or taskbar icon shows a red dot while a take records.
+- **Record in the mini player**: the same controls, with the newest take ready to drag.
+
+### Improved
+- **Project key picker stays open**: picking a key no longer closes the pop-up, so you can set Scale lock or grab the scale as MIDI right after.
+
+### Fixed
+- Folders with nothing inside them no longer get an expand arrow, so clicking one in the sidebar no longer shows "Collapse all folders".
+
 ## 1.0.4 - 2026-10-05
 
 Apple Loops play and get analyzed, the sample you're playing is analyzed first, and the list shows the columns you choose.

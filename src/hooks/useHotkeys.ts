@@ -12,6 +12,7 @@ import { stepScale } from "../lib/scale";
 import { auditionChord, chordNotes, labScale, playChord, playScale, stopNotes, stopProgression, toggleProgression, useLab } from "../store/lab";
 import { scaleChords } from "../lib/theory";
 import { sameChord, sketchScale } from "../lib/progressions";
+import { stepRecording, useRecord } from "../store/record";
 import { useSimilar } from "../store/similar";
 import { useSoundMap } from "../store/soundmap";
 import { useUi } from "../store/ui";
@@ -155,8 +156,12 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
         return;
       }
       if (e.key === "Escape") {
+        const record = useRecord.getState();
         if (similar.recording) {
           similar.cancelRecording();
+        } else if ((record.phase === "armed" || record.phase === "recording") && !typing) {
+          // Disarms, or stops and keeps the take.
+          void record.stop();
         } else if (browse.picked.size > 1 && !typing && !onMap) {
           browse.clearPicked();
         } else if (editing && !typing) {
@@ -169,6 +174,8 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
           useSoundMap.getState().setSelection([]);
         } else if (player.status !== "idle") {
           player.stop();
+        } else if (record.open && !ui.mini) {
+          record.setOpen(false);
         }
         return;
       }
@@ -197,8 +204,10 @@ export function useHotkeys(search: RefObject<HTMLInputElement | null>, openSetti
         ui.toggleLab();
       } else if ((e.key === "g" || e.key === "G") && row && !ui.mini) {
         findSimilar(row);
-      } else if ((e.key === "r" || e.key === "R") && row) {
-        useEdits.getState().update(row.id, { reverse: !editFor(row.id).reverse });
+      } else if ((e.key === "r" || e.key === "R") && e.shiftKey) {
+        if (row) useEdits.getState().update(row.id, { reverse: !editFor(row.id).reverse });
+      } else if (e.key === "r" || e.key === "R") {
+        stepRecording();
       } else if (e.key === "[" || e.key === "]") {
         if (row) stepPitch(row, e.key === "]" ? 1 : -1);
       } else if (e.key === "s" || e.key === "S") {

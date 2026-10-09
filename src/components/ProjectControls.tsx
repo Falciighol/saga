@@ -165,8 +165,8 @@ export function KeyControl({ compact }: { compact?: boolean }) {
             value={key ? { pc: key.pc, mode: key.mode, compatible: true, includeUnpitched: true, rootInScale: true, scale: labScale?.steps } : null}
             counts={undefined}
             onPick={(pc, mode) => {
+              // Stays open so Scale lock and the MIDI clip are within reach of the key just picked.
               set({ key: key && key.pc === pc && key.mode === mode ? null : { pc, mode } });
-              close();
             }}
           />
           <div className={cx("flex flex-col gap-0.5 self-stretch", !key && "pointer-events-none opacity-45")}>

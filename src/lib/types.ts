@@ -320,3 +320,131 @@ export interface InstalledFont {
   /** Every face in the family is fixed-width. */
   mono: boolean;
 }
+
+// ---- the Record panel. Mirrors capture.rs, takes.rs and RecordSettings in commands.rs. ----
+
+/** What to record. Mirrors `SourceSpec` in capture.rs. */
+export type RecordSource =
+  /** An input device; `channels` picks one channel or a pair (0-based). Empty means the first one or two. */
+  | { kind: "input"; device: string; channels: number[] }
+  /** One app's sound, with whatever it starts. */
+  | { kind: "app"; pid: number; name: string }
+  /** Everything the computer plays, except Saga. */
+  | { kind: "system" };
+
+/** Mirrors `TakeOptions` in capture.rs. */
+export interface TakeOptions {
+  /** Wait for the first sound; otherwise the take starts at once. */
+  startOnSound: boolean;
+  /** Seconds of silence that end a take; null never ends one. */
+  stopAfter: number | null;
+  /** Arm again after each take, so every sound becomes its own take. */
+  keepGoing: boolean;
+  /** The level that starts a take, in dBFS; null follows the noise floor. */
+  thresholdDb: number | null;
+  /** Minutes to add to UTC for the local time in take names (minus `getTimezoneOffset`). */
+  utcOffset: number;
+}
+
+export type CaptureState = "idle" | "armed" | "recording";
+
+/** The live state, about 30 times a second while armed or recording. Mirrors `TakeStatus` in capture.rs. */
+export interface TakeStatus {
+  state: CaptureState;
+  /** The source's name, as the panel shows it. */
+  source: string;
+  /** Seconds recorded in this take so far. */
+  seconds: number;
+  /** Peak of the newest audio, 0–1. */
+  level: number;
+  /** Waveform bars (peaks, 0–1) since the last status, one per 25 ms. */
+  bars: number[];
+  /** The level that starts a take, 0–1. */
+  threshold: number;
+  /** The source's noise floor, 0–1. */
+  floor: number;
+  /** Seconds of silence at the end of the take so far. */
+  silentFor: number;
+  /** Something in this take reached full scale. */
+  clipped: boolean;
+  /** Takes made since arming. */
+  takes: number;
+  /** An app source has been completely silent since it was armed. */
+  nothingYet: boolean;
+}
+
+/** What's in the way of recording. Mirrors `Problem` in capture.rs. */
+export interface RecordProblem {
+  message: string;
+  /** The privacy setting that would let Saga record, when that's what's in the way. */
+  settings: "microphone" | "systemAudio" | null;
+}
+
+/** Mirrors `TakeNotice` in capture.rs. */
+export interface TakeNotice {
+  message: string;
+  tone: "info" | "error";
+  settings: "microphone" | "systemAudio" | null;
+}
+
+/** A take was stored and is being analyzed. Mirrors `TakeLanded` in capture.rs. */
+export interface TakeLanded {
+  id: number;
+  recovered: boolean;
+}
+
+/** Mirrors `InputDevice` in capture.rs. */
+export interface InputDevice {
+  name: string;
+  channels: number;
+  sampleRate: number;
+  isDefault: boolean;
+}
+
+/** Mirrors `AppSource` in capture.rs. */
+export interface AppSource {
+  pid: number;
+  name: string;
+  /** The app's icon as a PNG data URL. */
+  icon: string | null;
+  /** Making sound right now. */
+  playing: boolean;
+}
+
+/** Everything that can be recorded on this computer. Mirrors `RecordSources` in capture.rs. */
+export interface RecordSources {
+  inputs: InputDevice[];
+  apps: AppSource[];
+  /** One app can be recorded on its own. */
+  appsSupported: boolean;
+  /** Everything you hear can be recorded. */
+  systemSupported: boolean;
+  /** Everything you hear includes Saga's own sounds here (Windows before version 2004). */
+  systemIncludesSaga: boolean;
+  /** Why apps or everything you hear can't be recorded on this computer, when they can't. */
+  unsupported: string | null;
+}
+
+/** Mirrors `TakeList` in takes.rs. */
+export interface TakeList {
+  /** Samples from this source are unsaved takes. */
+  sourceId: number;
+  /** Unsaved takes, newest first. */
+  rows: SampleRow[];
+  /** Space they take on disk. */
+  bytes: number;
+}
+
+export type TakeFormat = "24" | "float";
+export type TakesRetention = "keep" | "week" | "quit";
+
+/** Settings › Recording. Mirrors `RecordSettings` in commands.rs. */
+export interface RecordSettings {
+  format: TakeFormat;
+  /** What happens to unsaved takes. */
+  retention: TakesRetention;
+  /** The shortcut that arms, records and stops from anywhere, as Tauri spells it; null when unset. */
+  shortcut: string | null;
+  /** Where saved takes go. */
+  recordings: string;
+}

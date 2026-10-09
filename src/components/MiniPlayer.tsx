@@ -13,6 +13,7 @@ import { useLibrary } from "../store/library";
 import { useLoopOn, usePlayer } from "../store/player";
 import { usePrefs } from "../store/prefs";
 import { useEdit, useEdits } from "../store/project";
+import { useRecord } from "../store/record";
 import { useUi } from "../store/ui";
 import { lengthLabel, tempoLabel } from "./FilterPanel";
 import { KEY_FIT_TONE, keyFitLabel, keyFitText, useKeyFit, type KeyFit } from "./ListColumns";
@@ -21,6 +22,8 @@ import { Clock, dragHeard, PitchStepper, PLAY_NEXT_LABEL, ReverseIcon, useElemen
 import { KeyControl, SyncSwitch, TempoControl } from "./ProjectControls";
 import { cx, IconButton, Kbd } from "./ui";
 import { MiniWave } from "./Waveforms";
+import { MiniRecord } from "./record/RecordPanel";
+import { TakeList } from "./record/Takes";
 import { WindowControls } from "./WindowControls";
 
 const ROW_H = 56;
@@ -323,7 +326,7 @@ function MiniPreview() {
         <IconButton label={PLAY_NEXT_LABEL} size={30} active={playNext} aria-pressed={playNext} onClick={() => setPlayNext(!playNext)}>
           <ListEnd size={15} strokeWidth={1.75} />
         </IconButton>
-        <IconButton label="Reverse (R)" size={30} active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
+        <IconButton label="Reverse (⇧R)" size={30} active={edit.reverse} aria-pressed={edit.reverse} onClick={() => update(row.id, { reverse: !edit.reverse })}>
           <ReverseIcon size={15} />
         </IconButton>
         <PitchStepper row={row} processing={processing} compact />
@@ -334,17 +337,71 @@ function MiniPreview() {
   );
 }
 
-/** A narrow window that can stay on top next to your DAW: search, list and preview. */
-export const MiniPlayer = forwardRef<HTMLInputElement>(function MiniPlayer(_, searchRef) {
+/** Search, the project controls and the sample list. */
+const MiniBrowse = forwardRef<HTMLInputElement>(function MiniBrowse(_, searchRef) {
   const text = useBrowse((s) => s.text);
   const setText = useBrowse((s) => s.setText);
+  return (
+    <>
+      <div className="flex shrink-0 flex-col gap-2.5 px-3 pt-3">
+        <label className="flex h-[34px] items-center gap-2 rounded-lg bg-raised pr-2 pl-2.5 text-text3 focus-within:ring-1 focus-within:ring-line2">
+          <Search size={14} strokeWidth={2} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="text"
+            spellCheck={false}
+            autoCorrect="off"
+            aria-label="Search samples"
+            placeholder="Search samples"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-text3"
+          />
+          {text ? (
+            <button type="button" aria-label="Clear search" onClick={() => setText("")} className="grid h-5 w-5 place-items-center rounded text-text3 hover:text-text">
+              <X size={13} />
+            </button>
+          ) : (
+            <Kbd>{modKey}K</Kbd>
+          )}
+        </label>
+        <div className="flex items-center gap-1.5">
+          <TempoControl compact />
+          <KeyControl compact />
+          <SyncSwitch />
+          <div className="flex-1" />
+          <KindSwitch />
+        </div>
+        <FilterChips />
+      </div>
+      <MiniList />
+    </>
+  );
+});
+
+/** A narrow window that can stay on top next to your DAW: search, list and preview. */
+export const MiniPlayer = forwardRef<HTMLInputElement>(function MiniPlayer(_, searchRef) {
   const onTop = usePrefs((s) => s.miniOnTop);
   const hasSources = useLibrary((s) => s.sources.length > 0);
+  const recordOpen = useRecord((s) => s.miniOpen);
+  const miniTakes = useRecord((s) => s.miniTakes);
+  const phase = useRecord((s) => s.phase);
   const { setMini, setOnTop } = useUi.getState();
   return (
     <div className="flex h-full flex-col bg-bg text-text">
       <header data-tauri-drag-region className={cx("flex h-12 shrink-0 items-center gap-1.5 border-b border-line bg-panel", isWindows ? "pr-0" : "pr-2.5")} style={{ paddingLeft: isMac ? 84 : 12 }}>
         <div data-tauri-drag-region className="h-full flex-1" />
+        <IconButton
+          label={recordOpen ? "Hide recording" : "Record (R)"}
+          size={28}
+          active={recordOpen}
+          aria-pressed={recordOpen}
+          onClick={() => useRecord.getState().setMiniOpen(!recordOpen)}
+        >
+          <span aria-hidden="true" className={cx("grid h-[15px] w-[15px] place-items-center rounded-full border-[1.5px]", phase === "idle" || phase === "opening" ? "border-current" : "border-rec")}>
+            <span className={cx("block h-[7px] w-[7px] rounded-full", phase === "armed" ? "border border-rec" : "bg-rec", phase !== "idle" && phase !== "opening" && "animate-rec-blink")} />
+          </span>
+        </IconButton>
         <button
           type="button"
           aria-pressed={onTop}
@@ -361,40 +418,16 @@ export const MiniPlayer = forwardRef<HTMLInputElement>(function MiniPlayer(_, se
         {isWindows && <div className="w-1.5 shrink-0" />}
         <WindowControls />
       </header>
-      {hasSources ? (
+      {recordOpen && <MiniRecord />}
+      {hasSources || recordOpen ? (
         <>
-          <div className="flex shrink-0 flex-col gap-2.5 px-3 pt-3">
-            <label className="flex h-[34px] items-center gap-2 rounded-lg bg-raised pr-2 pl-2.5 text-text3 focus-within:ring-1 focus-within:ring-line2">
-              <Search size={14} strokeWidth={2} aria-hidden="true" />
-              <input
-                ref={searchRef}
-                type="text"
-                spellCheck={false}
-                autoCorrect="off"
-                aria-label="Search samples"
-                placeholder="Search samples"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                className="min-w-0 flex-1 bg-transparent text-body text-text outline-none placeholder:text-text3"
-              />
-              {text ? (
-                <button type="button" aria-label="Clear search" onClick={() => setText("")} className="grid h-5 w-5 place-items-center rounded text-text3 hover:text-text">
-                  <X size={13} />
-                </button>
-              ) : (
-                <Kbd>{modKey}K</Kbd>
-              )}
-            </label>
-            <div className="flex items-center gap-1.5">
-              <TempoControl compact />
-              <KeyControl compact />
-              <SyncSwitch />
-              <div className="flex-1" />
-              <KindSwitch />
-            </div>
-            <FilterChips />
-          </div>
-          <MiniList />
+          {miniTakes && recordOpen ? (
+            <TakeList compact className="border-b border-line" />
+          ) : hasSources ? (
+            <MiniBrowse ref={searchRef} />
+          ) : (
+            <div className="flex-1" />
+          )}
           <MiniPreview />
         </>
       ) : (

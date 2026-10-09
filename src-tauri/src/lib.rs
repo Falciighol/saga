@@ -1,5 +1,10 @@
 mod analysis;
 mod audio;
+mod capture;
+#[cfg(target_os = "macos")]
+mod capture_mac;
+#[cfg(windows)]
+mod capture_win;
 mod chunks;
 mod commands;
 mod db;
@@ -21,6 +26,7 @@ mod rename;
 mod sequence;
 mod sounds;
 mod synth;
+mod takes;
 
 use audio::Engine;
 use db::Db;
@@ -28,9 +34,9 @@ use indexer::{Emit, Indexer};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, RunEvent, Runtime, WindowEvent};
 
 /// Sound maps by kind (one-shots, loops or both) and aspect.
 type Layouts = HashMap<(Option<u8>, sounds::Aspect), Arc<map::Layout>>;
@@ -52,6 +58,12 @@ pub struct AppState {
     pub layouts: Mutex<Layouts>,
     pub layout_serial: AtomicU64,
     pub recorder: record::Recorder,
+    /// The Record panel's armed or recording source.
+    pub capture: Arc<capture::Capture>,
+    /// Unsaved takes: their folder and the hidden source that holds them.
+    pub takes: takes::Takes,
+    /// The window already asked what to do with unsaved takes, so quitting goes ahead.
+    pub quit_confirmed: AtomicBool,
     /// Features of the last recording, so it can be compared again by another aspect.
     pub last_recording: Mutex<Option<Vec<f32>>>,
     /// The full window's position and size while the mini player is showing.
@@ -76,7 +88,7 @@ impl AppState {
         self.music_dir.join("Saga")
     }
 
-    pub fn new(db: Arc<Db>, indexer: Arc<Indexer>, engine: Engine, drag_icon: PathBuf, music_dir: PathBuf, scratch_renders: PathBuf) -> AppState {
+    pub fn new(db: Arc<Db>, indexer: Arc<Indexer>, engine: Engine, drag_icon: PathBuf, music_dir: PathBuf, scratch_renders: PathBuf, takes: takes::Takes) -> AppState {
         AppState {
             db,
             indexer,
@@ -89,6 +101,9 @@ impl AppState {
             layouts: Default::default(),
             layout_serial: AtomicU64::new(0),
             recorder: Default::default(),
+            capture: Default::default(),
+            takes,
+            quit_confirmed: AtomicBool::new(false),
             last_recording: Default::default(),
             full_window: Default::default(),
             ui_scale: Mutex::new(1.0),
@@ -204,6 +219,20 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
             commands::stop_recording,
             commands::cancel_recording,
             commands::similar_to_recording,
+            commands::record_sources,
+            commands::arm_take,
+            commands::set_take_options,
+            commands::record_take_now,
+            commands::stop_take,
+            commands::list_takes,
+            commands::save_take,
+            commands::trash_takes,
+            commands::clear_unsaved_takes,
+            commands::record_settings,
+            commands::set_record_settings,
+            commands::set_record_shortcut,
+            commands::open_privacy_settings,
+            commands::quit_app,
             commands::sound_map,
             commands::map_matches,
             commands::set_window_mode,
@@ -211,16 +240,131 @@ pub fn with_commands<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Bu
         ])
 }
 
+/// Shows a red dot on the Dock icon (macOS) or the taskbar button (Windows) while a take records,
+/// so it's visible from inside the DAW.
+pub fn show_recording<R: Runtime>(app: &AppHandle<R>, on: bool) {
+    let Some(window) = app.get_webview_window("main") else { return };
+    #[cfg(target_os = "macos")]
+    let _ = window.set_badge_label(on.then(|| "REC".to_string()));
+    #[cfg(windows)]
+    {
+        let dot = on.then(recording_dot);
+        let _ = window.set_overlay_icon(dot.as_ref().map(|px| tauri::image::Image::new(px, DOT, DOT)));
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let _ = (window, on);
+}
+
+#[cfg(windows)]
+const DOT: u32 = 32;
+
+/// A red dot for the taskbar button, the same red as the Record button's dark-theme `--rec`.
+#[cfg(windows)]
+fn recording_dot() -> Vec<u8> {
+    let mut rgba = vec![0u8; (DOT * DOT * 4) as usize];
+    let c = (DOT as f32 - 1.0) / 2.0;
+    for y in 0..DOT {
+        for x in 0..DOT {
+            let d = ((x as f32 - c).powi(2) + (y as f32 - c).powi(2)).sqrt();
+            // A white ring around the dot keeps it readable on any taskbar colour.
+            let (px, alpha) = if d <= 11.0 {
+                ([0xF0, 0x44, 0x4F], ((11.5 - d).clamp(0.0, 1.0) * 255.0) as u8)
+            } else {
+                ([0xFF, 0xFF, 0xFF], ((14.5 - d).clamp(0.0, 1.0) * 255.0) as u8)
+            };
+            let i = ((y * DOT + x) * 4) as usize;
+            rgba[i..i + 3].copy_from_slice(&px);
+            rgba[i + 3] = alpha;
+        }
+    }
+    rgba
+}
+
+/// Swaps the global shortcut that arms, records and stops. Either may be None.
+pub fn register_record_shortcut<R: Runtime>(app: &AppHandle<R>, old: Option<&str>, new: Option<&str>) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcut;
+        let Some(shortcuts) = app.try_state::<GlobalShortcut<R>>() else {
+            return if new.is_some() { Err("Shortcuts from anywhere aren't available".into()) } else { Ok(()) };
+        };
+        if let Some(old) = old {
+            let _ = shortcuts.unregister(old);
+        }
+        if let Some(new) = new {
+            shortcuts.register(new).map_err(|e| format!("Couldn't use that shortcut: {e}. Another app may already use it."))?;
+        }
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, old, new);
+        Ok(())
+    }
+}
+
+/// How many unsaved takes to ask about before quitting, when unsaved takes go to the Trash on quit.
+fn takes_to_ask_about(state: &AppState) -> Option<usize> {
+    if state.quit_confirmed.load(Ordering::Relaxed) || state.db.get_setting(capture::TAKES_RETENTION_SETTING).as_deref() != Some("quit") {
+        return None;
+    }
+    let n = state.db.takes(state.takes.source).map(|r| r.len()).unwrap_or(0);
+    (n > 0).then_some(n)
+}
+
+/// Asks the window about unsaved takes instead of quitting, when it should.
+fn ask_before_quitting<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let Some(state) = app.try_state::<AppState>() else { return false };
+    match takes_to_ask_about(&state) {
+        Some(n) => {
+            let _ = app.emit("quit-requested", n);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Startup housekeeping for takes: finish ones a crash left half-written, line the list up with the
+/// folder, analyze any that weren't yet, and clear unsaved ones older than a week if asked to.
+fn tidy_takes(ctx: capture::Ctx, saved_root: PathBuf) {
+    capture::recover(&ctx);
+    capture::reconcile(&ctx);
+    ctx.indexer.queue_pending();
+    if ctx.db.get_setting(capture::TAKES_RETENTION_SETTING).as_deref() == Some("week") {
+        let t = takes::Takes { dir: ctx.takes_dir.clone(), source: ctx.takes_source };
+        if let Err(e) = takes::clear_unsaved(&ctx.db, &t, &saved_root, Some(takes::WEEK)) {
+            eprintln!("saga: couldn't clear old takes: {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    with_commands(tauri::Builder::default())
+    let app = with_commands(tauri::Builder::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_process::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" && ask_before_quitting(window.app_handle()) {
+                    api.prevent_close();
+                }
+            }
+        })
         .setup(|app| {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            #[cfg(desktop)]
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(|app, _shortcut, event| {
+                        if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                            let _ = app.emit("record-shortcut", ());
+                        }
+                    })
+                    .build(),
+            )?;
 
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -259,12 +403,39 @@ pub fn run() {
                 let gone = render::prune_scratch(&scratch2, render::SCRATCH_MAX_AGE, render::SCRATCH_MAX_BYTES, None);
                 let _ = db2.forget_renders(&gone.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>());
             });
-            app.manage(AppState::new(db, indexer.clone(), engine, drag_icon, music_dir, scratch));
+            let takes_dir = data_dir.join("Takes");
+            std::fs::create_dir_all(takes_dir.join(capture::INCOMING_DIR))?;
+            let takes = takes::Takes { source: db.takes_source(&takes_dir.to_string_lossy())?, dir: takes_dir };
+            let state = AppState::new(db, indexer.clone(), engine, drag_icon, music_dir, scratch, takes);
+            if let Some(shortcut) = state.db.get_setting(capture::RECORD_SHORTCUT_SETTING) {
+                if let Err(e) = register_record_shortcut(app.handle(), None, Some(&shortcut)) {
+                    eprintln!("saga: {e}");
+                }
+            }
+            let ctx = commands::capture_ctx(app.handle(), &state);
+            let saved_root = state.saved_root();
+            app.manage(state);
             indexer.resume_all();
+            std::thread::Builder::new().name("saga-takes".into()).spawn(move || tidy_takes(ctx, saved_root))?;
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running Saga");
+    app.run(|app, event| match event {
+        // Quitting from the menu or the Dock (macOS), or after the last window closed.
+        RunEvent::ExitRequested { code: None, api, .. } => {
+            if ask_before_quitting(app) {
+                api.prevent_exit();
+            }
+        }
+        // A take being recorded is kept, not cut off.
+        RunEvent::Exit => {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.capture.stop();
+            }
+        }
+        _ => {}
+    });
 }
 
 /// Exercises the commands through Tauri's IPC layer with the exact JSON the frontend sends,
@@ -331,7 +502,10 @@ mod ipc_tests {
         let db = Arc::new(Db::open(&data.path().join("t.db")).unwrap());
         let indexer = Indexer::start(db.clone(), Arc::new(|_, _| {}));
         let engine = Engine::start(None, 0.8, Arc::new(|_| {}), Arc::new(|_| {}));
-        app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music"), data.path().join("cache/renders")));
+        let takes_dir = data.path().join("Takes");
+        std::fs::create_dir_all(&takes_dir).unwrap();
+        let takes = takes::Takes { source: db.takes_source(&takes_dir.to_string_lossy()).unwrap(), dir: takes_dir.clone() };
+        app.manage(AppState::new(db, indexer.clone(), engine, data.path().join("icon.png"), data.path().join("Music"), data.path().join("cache/renders"), takes));
         let w = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
 
         let lib_path = lib.path().to_string_lossy().to_string();
@@ -636,5 +810,45 @@ mod ipc_tests {
         let clip = call(&w, "save_midi", elsewhere).unwrap();
         assert!(Path::new(clip.as_str().unwrap()).starts_with(moved.join("Renders")), "{clip}");
         assert_eq!(call(&w, "reset_saved_sounds_dir", json!({})).unwrap()["isDefault"], true);
+
+        // The Record panel. Sources are only listed, never opened, and a take is stored the way the
+        // capture thread stores one. Nothing here touches the real Trash.
+        let sources = call(&w, "record_sources", json!({})).unwrap();
+        assert!(sources["inputs"].is_array() && sources["apps"].is_array() && sources["systemSupported"].is_boolean(), "{sources}");
+        let settings = call(&w, "record_settings", json!({})).unwrap();
+        assert_eq!((settings["format"].clone(), settings["retention"].clone(), settings["shortcut"].clone()), (json!("24"), json!("keep"), Value::Null));
+        assert!(Path::new(settings["recordings"].as_str().unwrap()).ends_with("Saga/Recordings"), "{settings}");
+        let set = call(&w, "set_record_settings", json!({ "format": "float", "retention": "week" })).unwrap();
+        assert_eq!((set["format"].clone(), set["retention"].clone()), (json!("float"), json!("week")));
+        assert!(call(&w, "set_record_settings", json!({ "format": "mp3", "retention": null })).is_err());
+        // The mock app has no global shortcut plugin: clearing is fine, setting one says it isn't available.
+        assert!(call(&w, "set_record_shortcut", json!({ "shortcut": null })).is_ok());
+        assert!(call(&w, "set_record_shortcut", json!({ "shortcut": "CommandOrControl+Shift+R" })).is_err());
+        let options = json!({ "startOnSound": true, "stopAfter": 2, "keepGoing": false, "thresholdDb": null, "utcOffset": 120 });
+        for (cmd, body) in [("set_take_options", json!({ "options": options })), ("record_take_now", json!({})), ("stop_take", json!({}))] {
+            assert!(call(&w, cmd, body).is_ok(), "{cmd}");
+        }
+        let problem = call(&w, "arm_take", json!({ "source": { "kind": "input", "device": "No Such Interface", "channels": [2, 3] }, "options": options })).unwrap();
+        assert!(problem["message"].as_str().unwrap().contains("No Such Interface"), "{problem}");
+        assert!(call(&w, "open_privacy_settings", json!({ "what": "nothing" })).is_err());
+
+        let take = takes_dir.join("Desktop audio 14.32.07.wav");
+        write_wav(&take, 1.5);
+        let state = w.state::<AppState>();
+        let take_id = state.indexer.add_file_now(state.takes.source, "Takes", &takes_dir, &take).unwrap();
+        let list = call(&w, "list_takes", json!({})).unwrap();
+        assert_eq!((list["sourceId"].clone(), list["rows"][0]["id"].clone()), (json!(state.takes.source), json!(take_id)));
+        assert!(list["bytes"].as_u64().unwrap() > 100_000);
+        // Unsaved, a take can be played and dragged, but browsing and search don't find it.
+        assert_eq!(call(&w, "query_samples", request(ui_filters(json!({ "text": "desktop" })))).unwrap()["total"], 0);
+        assert_eq!(call(&w, "get_sample", json!({ "id": take_id })).unwrap()["id"], take_id);
+        let saved = call(&w, "save_take", json!({ "id": take_id })).unwrap();
+        assert_eq!(Path::new(saved["path"].as_str().unwrap()), data.path().join("Music/Saga/Recordings/Desktop audio 14.32.07.wav"));
+        assert_eq!(call(&w, "query_samples", request(ui_filters(json!({ "text": "desktop" })))).unwrap()["total"], 1);
+        assert!(call(&w, "list_sources", json!({})).unwrap().as_array().unwrap().iter().any(|s| s["name"] == "Recordings"));
+        assert!(call(&w, "list_sources", json!({})).unwrap().as_array().unwrap().iter().all(|s| s["name"] != "Takes"));
+        // Only takes and recordings ever go to the Trash; with no unsaved takes, clearing them moves nothing.
+        assert_eq!(call(&w, "trash_takes", json!({ "ids": [999_999] })), Ok(json!(0)));
+        assert_eq!(call(&w, "clear_unsaved_takes", json!({})), Ok(json!(0)));
     }
 }
