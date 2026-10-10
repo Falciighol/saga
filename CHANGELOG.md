@@ -16,8 +16,7 @@ Write for producers, not developers: say what changed for them, not which file c
 
 # Changelog
 
-## Unreleased
-
+## 1.0.5 — 2026-10-10
 ### Good to know
 - **Reverse moved to `⇧ R`**: `R` now opens the new Record panel.
 
